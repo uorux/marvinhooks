@@ -47,9 +47,13 @@
       in
       {
         devShell = pkgs.mkShell {
-          buildInputs = [
+          buildInputs = with pkgs; [
+            openssl
+          ];
+          nativeBuildInputs = with pkgs; [
+            rust-analyzer
+            pkg-config
             (rustVersion.override { extensions = [ "rust-src" ]; })
-            pkgs.rust-analyzer
           ];
         };
         packages = {
