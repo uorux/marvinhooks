@@ -40,7 +40,7 @@
         dockerImage = pkgs.dockerTools.buildImage {
           name = "rust-nix-blog";
           config = {
-            Cmd = [ "${myRustBuild}/bin/rust_nix_blog" ];
+            Cmd = [ "${myRustBuild}/bin/marvinhooks" ];
           };
         };
 
