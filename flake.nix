@@ -46,9 +46,10 @@
 
       in
       {
-        devShell = pkgs.mkShell {
+        devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             openssl
+            pkg-config
           ];
           nativeBuildInputs = with pkgs; [
             rust-analyzer
