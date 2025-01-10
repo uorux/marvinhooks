@@ -1,9 +1,8 @@
 use axum::{
     Router,
-    routing::{get, post},
+    routing::get,
 };
 use tower_http::cors::{Any, CorsLayer};
-use std::net::SocketAddr;
 
 mod routes; // bring in our `routes` module
 mod handlers;
