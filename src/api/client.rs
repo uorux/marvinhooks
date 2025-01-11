@@ -4,10 +4,10 @@ use crate::api::error::ApiError;
 use crate::api::requests::*;
 use crate::api::responses::*;
 use crate::models::{
-    {Task, ProjectOrCategory},
-    Event,
-    Habit,
-    Reminder,
+    tasks::{Task, ProjectOrCategory},
+    calendars::Event,
+    habits::Habit,
+    reminders::Reminder,
 };
 
 /// The default base URL for Marvin's API.
@@ -167,6 +167,14 @@ impl MarvinClient {
         self.get("doc", Some(query)).await
     }
 
+    /// Read any project (requires full-access token) via GET /api/doc?id=xyz
+    pub async fn get_project_or_category(&self, project_id: &str) -> Result<ProjectOrCategory, ApiError> {
+        // Must use full-access token here. 
+        // We'll assume you used new(...) with full_access_token or you won't succeed.
+        let query = &[("id", project_id)];
+        self.get("doc", Some(query)).await
+    }
+
     /// Update any doc (requires full-access token) via POST /api/doc/update
     pub async fn update_doc(&self, req: &UpdateDocRequest) -> Result<MarvinDoc, ApiError> {
         self.post_json("doc/update", req).await
@@ -215,7 +223,7 @@ impl MarvinClient {
     }
 
     /// Get a list of today's time blocks: GET /api/todayTimeBlocks?date=YYYY-MM-DD
-    pub async fn get_today_time_blocks(&self, date: Option<&str>) -> Result<Vec<crate::models::TimeBlock>, ApiError> {
+    pub async fn get_today_time_blocks(&self, date: Option<&str>) -> Result<Vec<crate::models::calendars::TimeBlock>, ApiError> {
         let query = date.map(|d| [("date", d)]);
         if let Some(q) = query {
             self.get("todayTimeBlocks", Some(&q)).await

@@ -3,10 +3,12 @@ use axum::{
     routing::get,
 };
 use tower_http::cors::{Any, CorsLayer};
+use tokio::signal;
 
+mod api;
 mod routes; // bring in our `routes` module
-mod handlers;
 mod models;
+mod cache;
 
 #[tokio::main]
 async fn main() {
@@ -35,5 +37,25 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await
         .expect("Failed to bind listener");
-    axum::serve(listener, app).await.expect("Server failed");
+    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await.expect("Server failed");
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }

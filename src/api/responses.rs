@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use crate::models::{
-    Task,
-    Event,
-    Habit,
+    tasks::{Task, ProjectOrCategory, Goal},
+    calendars::Event,
+    labels::Label,
+    reminders::Reminder,
+    habits::Habit,
 };
 
 // For many endpoints returning just "OK", we can use a `String` directly.
@@ -34,16 +36,16 @@ pub type TodayItemsResponse = Vec<Task>;
 pub type ChildrenResponse = Vec<Task>;
 
 // The GET /api/categories is a list of categories (ProjectOrCategory)
-pub type CategoriesResponse = Vec<crate::models::ProjectOrCategory>;
+pub type CategoriesResponse = Vec<ProjectOrCategory>;
 
 // The GET /api/labels is a list of Label
-pub type LabelsResponse = Vec<crate::models::Label>;
+pub type LabelsResponse = Vec<Label>;
 
 // The GET /api/reminders returns an array of Reminders
-pub type GetRemindersResponse = Vec<crate::models::Reminder>;
+pub type GetRemindersResponse = Vec<Reminder>;
 
 // The GET /api/goals returns an array of goals
-pub type GoalsResponse = Vec<crate::models::Goal>;
+pub type GoalsResponse = Vec<Goal>;
 
 // The GET /api/habits returns an array of habits
 pub type HabitsResponse = Vec<Habit>;

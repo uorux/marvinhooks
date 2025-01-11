@@ -35,10 +35,16 @@
           version = "0.1.0";
           src = ./.; # the folder with the cargo.toml
           cargoLock.lockFile = ./Cargo.lock;
+          buildInputs = with pkgs; [
+            openssl
+          ];
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ];
         };
 
         dockerImage = pkgs.dockerTools.buildImage {
-          name = "rust-nix-blog";
+          name = "marvinhooks";
           config = {
             Cmd = [ "${myRustBuild}/bin/marvinhooks" ];
           };
@@ -49,7 +55,6 @@
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             openssl
-            pkg-config
           ];
           nativeBuildInputs = with pkgs; [
             rust-analyzer

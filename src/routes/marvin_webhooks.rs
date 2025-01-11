@@ -8,24 +8,15 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::env;
+use std::{env, sync::Arc};
 
-use crate::handlers::marvin::{handle_marvin_webhook_type, handle_other_webhook};
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct WebhookRequest {
-    #[serde(rename = "type")]
-    webhook_type: String,
-    #[serde(flatten)]
-    data: Value,
-}
+use crate::{cache::cache, models::tasks::{ProjectOrCategory, Task}, api::client::MarvinClient};
 
 /// Main router for Marvin webhooks.
 pub fn router() -> Router {
     Router::new()
         // Protected endpoints:
-        .route("/marvin-webhook", post(marvin_webhook))
+        .route("/start-tracking", post(start_tracking))
         .route("/marvin-other", post(other_webhook))
         // Attach our auth layer to every route in this router.
         .layer(middleware::from_fn(require_auth))
@@ -59,19 +50,93 @@ async fn require_auth(req: Request<Body>, next: Next) -> Result<Response, Status
 }
 
 /// Primary endpoint that routes based on `webhook_type`.
-async fn marvin_webhook(Json(payload): Json<WebhookRequest>) -> Result<String, StatusCode> {
-    handle_marvin_webhook_type(&payload.webhook_type, &payload.data)
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> {
+    println!("Webhook Called");
+
+    let mut parent_id = payload.parent_id;
+    let mut parents: Vec<ProjectOrCategory> = vec![];
+
+    let marvin_api_token = match env::var("MARVIN_API_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("MARVIN_API_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let marvin_full_access_token = match env::var("MARVIN_FULL_ACCESS_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("MARVIN_FULL_ACCESS_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+
+    // TODO: remove localhost override
+    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token)).with_base_url("localhost:12082");
+
+
+    while parent_id != "root" {
+        // Get project from cache
+        let parent = cache::cache_get(Arc::clone(&*cache::MARVIN_PROJECT_CACHE), &parent_id);
+        let parent = match parent {
+            Some(par) => par,
+            None => {
+                match marvin_client.get_project_or_category(&parent_id).await {
+                    Ok(par) => par,
+                    Err(err) => {
+                        println!("{}", err);
+                        return Err(StatusCode::SERVICE_UNAVAILABLE)
+                    },
+                }
+            }
+        };
+        parents.push(parent.clone());
+        parent_id = parent.parent_id;
+    }
+
+    for parent in parents {
+        println!("{:?}", parent);
+    }
+
+
+    // Grab full parent tree (from cache)
+    // Select items we want
+    // Construct toggl tree
+    // Start tracking on toggl
+
+    Ok("Webhook processed successfully".to_string())
+}
+
+/// Primary endpoint that routes based on `webhook_type`.
+async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> {
+    println!("Webhook Called");
+
+    // Stop tracking on toggl
+
+    Ok("Webhook processed successfully".to_string())
+}
+
+/// Primary endpoint that routes based on `webhook_type`.
+async fn add_project(Json(payload): Json<Task>) -> Result<String, StatusCode> {
+    println!("Webhook Called");
+
+    // Add project to project cache
+
+    Ok("Webhook processed successfully".to_string())
+}
+
+/// Primary endpoint that routes based on `webhook_type`.
+async fn edit_project(Json(payload): Json<Task>) -> Result<String, StatusCode> {
+    println!("Webhook Called");
+
+    // Update project with key in cache
 
     Ok("Webhook processed successfully".to_string())
 }
 
 /// A second example endpoint that doesn’t do any type-based routing.
 async fn other_webhook(Json(payload): Json<Value>) -> Result<String, StatusCode> {
-    handle_other_webhook(&payload)
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-
     Ok("Other webhook processed".to_string())
 }
