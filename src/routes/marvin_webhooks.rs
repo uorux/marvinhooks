@@ -8,7 +8,8 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{env, sync::Arc};
+use tokio::time::{sleep, Sleep};
+use std::{env, sync::Arc, time::Duration};
 
 use crate::{cache::cache, models::tasks::{ProjectOrCategory, Task}, api::client::MarvinClient};
 
@@ -54,7 +55,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
     println!("Webhook Called");
 
     let mut parent_id = payload.parent_id;
-    let mut parents: Vec<ProjectOrCategory> = vec![];
+    let mut parents: Vec<String> = vec![];
 
     let marvin_api_token = match env::var("MARVIN_API_TOKEN") {
         Ok(val) => val,
@@ -74,17 +75,31 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 
 
     // TODO: remove localhost override
-    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token)).with_base_url("localhost:12082");
+    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token)).with_base_url("http://localhost:12082/api");
 
 
-    while parent_id != "root" {
+    while parent_id != "root" && parent_id != "unassigned" {
         // Get project from cache
         let parent = cache::cache_get(Arc::clone(&*cache::MARVIN_PROJECT_CACHE), &parent_id);
         let parent = match parent {
-            Some(par) => par,
+            Some(parent) => parent,
             None => {
-                match marvin_client.get_project_or_category(&parent_id).await {
-                    Ok(par) => par,
+                match marvin_client.read_doc(&parent_id).await {
+                    Ok(doc) => {
+                        let title = match doc.extra.get("title") {
+                            Some(Value::String(title)) => title.clone(),
+                            _ => {
+                                return Err(StatusCode::SERVICE_UNAVAILABLE)
+                            }
+                        };
+                        let parent = match doc.extra.get("parentId") {
+                            Some(Value::String(parent)) => parent.clone(),
+                            _ => {
+                                return Err(StatusCode::SERVICE_UNAVAILABLE)
+                            }
+                        };
+                        (title, parent)
+                    },
                     Err(err) => {
                         println!("{}", err);
                         return Err(StatusCode::SERVICE_UNAVAILABLE)
@@ -92,14 +107,16 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
                 }
             }
         };
-        parents.push(parent.clone());
-        parent_id = parent.parent_id;
+        cache::cache_put(Arc::clone(&*cache::MARVIN_PROJECT_CACHE), parent_id, parent.clone());
+        parents.push(parent.0);
+        parent_id = parent.1;
+        // Make the marvin rate limiter happy by waiting 1 second
+        sleep(Duration::from_secs(1)).await;
     }
 
     for parent in parents {
         println!("{:?}", parent);
     }
-
 
     // Grab full parent tree (from cache)
     // Select items we want
@@ -113,28 +130,9 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> {
     println!("Webhook Called");
 
-    // Stop tracking on toggl
-
     Ok("Webhook processed successfully".to_string())
 }
 
-/// Primary endpoint that routes based on `webhook_type`.
-async fn add_project(Json(payload): Json<Task>) -> Result<String, StatusCode> {
-    println!("Webhook Called");
-
-    // Add project to project cache
-
-    Ok("Webhook processed successfully".to_string())
-}
-
-/// Primary endpoint that routes based on `webhook_type`.
-async fn edit_project(Json(payload): Json<Task>) -> Result<String, StatusCode> {
-    println!("Webhook Called");
-
-    // Update project with key in cache
-
-    Ok("Webhook processed successfully".to_string())
-}
 
 /// A second example endpoint that doesn’t do any type-based routing.
 async fn other_webhook(Json(payload): Json<Value>) -> Result<String, StatusCode> {

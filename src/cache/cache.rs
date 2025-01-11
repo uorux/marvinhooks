@@ -1,7 +1,5 @@
 use std::{collections::HashMap, hash::Hash, sync::{Arc, LazyLock, Mutex}, time::{Duration, Instant}};
 
-use crate::models::tasks::ProjectOrCategory;
-
 pub struct CacheItem<T> {
     pub time: Instant,
     pub value: T
@@ -9,7 +7,8 @@ pub struct CacheItem<T> {
 
 type Cache<K, V> where K: Eq, K: Hash = Arc<Mutex<HashMap<K, CacheItem<V>>>>;
 
-pub static MARVIN_PROJECT_CACHE: LazyLock<Cache<String, ProjectOrCategory>> = LazyLock::new(|| {
+// Title, parent id
+pub static MARVIN_PROJECT_CACHE: LazyLock<Cache<String, (String, String)>> = LazyLock::new(|| {
     Arc::new(Mutex::new(HashMap::new()))
 });
 
@@ -28,7 +27,7 @@ pub fn cache_get<K, V>(cache: Cache<K, V>, key: &K) -> Option<V> where K: Eq, K:
     }
 }
 
-pub fn cache_put<K, V>(cache: Mutex<HashMap<K, CacheItem<V>>>, key: K, value: V) where K: Eq, K: Hash, V: Clone {
+pub fn cache_put<K, V>(cache: Cache<K, V>, key: K, value: V) where K: Eq, K: Hash, V: Clone {
     let now = Instant::now();
     let mut map = cache.lock().unwrap();
     map.insert(key, CacheItem {

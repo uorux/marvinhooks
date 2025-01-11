@@ -67,11 +67,15 @@ impl MarvinClient {
             req = req.header("X-Full-Access-Token", token);
         }
 
+        println!("{:#?}", req);
+
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(ApiError::StatusCodeError(resp.status()));
         }
         let data = resp.json::<T>().await?;
+
         Ok(data)
     }
 
@@ -164,14 +168,6 @@ impl MarvinClient {
         // Must use full-access token here. 
         // We'll assume you used new(...) with full_access_token or you won't succeed.
         let query = &[("id", doc_id)];
-        self.get("doc", Some(query)).await
-    }
-
-    /// Read any project (requires full-access token) via GET /api/doc?id=xyz
-    pub async fn get_project_or_category(&self, project_id: &str) -> Result<ProjectOrCategory, ApiError> {
-        // Must use full-access token here. 
-        // We'll assume you used new(...) with full_access_token or you won't succeed.
-        let query = &[("id", project_id)];
         self.get("doc", Some(query)).await
     }
 
