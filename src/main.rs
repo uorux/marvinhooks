@@ -6,6 +6,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tokio::signal;
 
 mod api;
+mod toggl_api;
 mod routes; // bring in our `routes` module
 mod models;
 mod cache;

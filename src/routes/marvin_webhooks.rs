@@ -11,13 +11,14 @@ use serde_json::Value;
 use tokio::time::{sleep, Sleep};
 use std::{env, sync::Arc, time::Duration};
 
-use crate::{cache::cache, models::tasks::{ProjectOrCategory, Task}, api::client::MarvinClient};
+use crate::{api::client::MarvinClient, cache::cache, models::tasks::{ProjectOrCategory, Task}, toggl_api::client::TogglClient};
 
 /// Main router for Marvin webhooks.
 pub fn router() -> Router {
     Router::new()
         // Protected endpoints:
         .route("/start-tracking", post(start_tracking))
+        .route("/stop-tracking", post(stop_tracking))
         .route("/marvin-other", post(other_webhook))
         // Attach our auth layer to every route in this router.
         .layer(middleware::from_fn(require_auth))
@@ -73,6 +74,15 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         }
     };
 
+    let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("TOGGL_API_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
 
     // TODO: remove localhost override
     let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token)).with_base_url("http://localhost:12082/api");
@@ -129,6 +139,23 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 /// Primary endpoint that routes based on `webhook_type`.
 async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> {
     println!("Webhook Called");
+
+    let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("TOGGL_API_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
+
+    let result = toggl_client.stop_current_time_entry().await;
+
+    match result {
+        Err(error) => println!("{}", error),
+        Ok(_) => (),
+    }
 
     Ok("Webhook processed successfully".to_string())
 }

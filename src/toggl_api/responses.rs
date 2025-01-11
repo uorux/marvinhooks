@@ -3,7 +3,6 @@ use std::collections::HashMap;
 
 /// GET /api/v9/me response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct MeResponse {
     pub id: i64,
     pub email: String,
@@ -21,7 +20,6 @@ pub struct MeResponse {
 
 /// A generic "client" object returned by the Toggl Track API
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TogglClient {
     pub id: i64,
     pub name: String,
@@ -37,14 +35,12 @@ pub struct TogglClient {
 
 /// A wrapper for listing clients
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ListClientsResponse {
     pub items: Vec<TogglClient>,
 }
 
 /// A single project object
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TogglProject {
     pub id: i64,
     pub name: String,
@@ -63,14 +59,12 @@ pub struct TogglProject {
 
 /// A wrapper for listing projects
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ListProjectsResponse {
     pub items: Vec<TogglProject>,
 }
 
 /// A single task object
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TogglTask {
     pub id: i64,
     pub name: String,
@@ -87,7 +81,6 @@ pub struct TogglTask {
 
 /// A time entry object
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TimeEntry {
     pub id: i64,
     #[serde(default)]

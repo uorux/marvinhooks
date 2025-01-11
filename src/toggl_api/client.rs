@@ -291,6 +291,7 @@ impl TogglClient {
 
         let resp = req.send().await?;
 
+
         match resp.status() {
             StatusCode::OK => {
                 // Attempt to deserialize the time entry
@@ -319,6 +320,8 @@ impl TogglClient {
             Some(te) => te,
             None => return Ok(None), // No current entry
         };
+
+        println!("{:#?}", current_te);
 
         // 3) Extract workspace
         let ws_id = match current_te.workspace_id {

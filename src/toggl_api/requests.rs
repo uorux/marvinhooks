@@ -9,7 +9,6 @@ use std::collections::HashMap;
 // -------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateTimeEntryRequest {
     /// Whether the time entry is marked as billable, optional, default false
     #[serde(default)]
@@ -103,7 +102,6 @@ fn default_negative_duration() -> i64 {
 // -------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateClientRequest {
     pub name: String,
     #[serde(default)]
@@ -123,7 +121,6 @@ pub struct CreateClientRequest {
 // -------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateProjectRequest {
     #[serde(default)]
     pub active: Option<bool>,
@@ -169,7 +166,6 @@ pub struct CreateProjectRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct RecurringParameters {
     #[serde(default)]
     pub custom_period: Option<i64>,
@@ -185,7 +181,6 @@ pub struct RecurringParameters {
 // -------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CreateTaskRequest {
     #[serde(default)]
     pub active: Option<bool>,
