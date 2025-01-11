@@ -120,7 +120,7 @@ pub struct CreateClientRequest {
 // POST /api/v9/workspaces/{workspace_id}/projects
 // -------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateProjectRequest {
     #[serde(default)]
     pub active: Option<bool>,

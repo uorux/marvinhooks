@@ -36,6 +36,7 @@ pub struct TogglClient {
 /// A wrapper for listing clients
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListClientsResponse {
+    #[serde(flatten)]
     pub items: Vec<TogglClient>,
 }
 
@@ -60,6 +61,7 @@ pub struct TogglProject {
 /// A wrapper for listing projects
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListProjectsResponse {
+    #[serde(flatten)]
     pub items: Vec<TogglProject>,
 }
 

@@ -1,7 +1,10 @@
+use std::{cell::OnceCell, env, sync::OnceLock};
+
 use axum::{
     Router,
     routing::get,
 };
+use toggl_api::client::TogglClient;
 use tower_http::cors::{Any, CorsLayer};
 use tokio::signal;
 
@@ -11,10 +14,33 @@ mod routes; // bring in our `routes` module
 mod models;
 mod cache;
 
+static WORKSPACE_ID: OnceLock<i64> = OnceLock::new();
+
 #[tokio::main]
 async fn main() {
     // Initialize logging (useful for debug)
     tracing_subscriber::fmt::init();
+
+    let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            panic!("TOGGL_API_TOKEN is not set!");
+        }
+    };
+
+    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
+
+    let result = toggl_client.get_me(None).await;
+    let var_name = match result {
+        Ok(result) => {
+            result.default_workspace_id.unwrap()
+        }
+        Err(_) => {
+            panic!("Could not retrieve workspace ID from toggl");
+        }
+    };
+    let workspace_id = var_name;
+    WORKSPACE_ID.set(workspace_id).unwrap();
 
     // Build our application by composing routes
     let app = Router::new()

@@ -50,6 +50,7 @@ impl TogglClient {
             .request(Method::GET, &url)
             .basic_auth(&self.username, Some(&self.password));
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(TogglError::StatusCodeError(resp.status()));
         }
@@ -68,6 +69,7 @@ impl TogglClient {
             .basic_auth(&self.username, Some(&self.password))
             .query(query);
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(TogglError::StatusCodeError(resp.status()));
         }
@@ -85,9 +87,13 @@ impl TogglClient {
             .request(Method::POST, &url)
             .basic_auth(&self.username, Some(&self.password))
             .json(body);
+        println!("{:#?}", req);
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
-            return Err(TogglError::StatusCodeError(resp.status()));
+            println!("{}", resp.text().await.unwrap());
+            return Err(TogglError::StatusCodeError(StatusCode::INTERNAL_SERVER_ERROR));
+            //return Err(TogglError::StatusCodeError(resp.status()));
         }
         Ok(resp.json::<Rs>().await?)
     }
@@ -155,7 +161,7 @@ impl TogglClient {
 
         let body = CreateTimeEntryRequest {
             billable: Some(false),
-            created_with: "MyAppOrIntegrationName".to_string(),
+            created_with: "MarvinWebhook".to_string(),
             description: Some(description.to_string()),
             duration: -1, // negative => running
             duronly: None,
@@ -167,7 +173,7 @@ impl TogglClient {
             start_date: None,
             stop: None, // no stop => it's running
             tag_action: None,
-            tag_ids: None,
+            tag_ids: Some(vec![]),
             tags: None,
             task_id,
             tid: None,
@@ -199,7 +205,7 @@ impl TogglClient {
         workspace_id: i64,
         status: Option<&str>,
         name_filter: Option<&str>,
-    ) -> Result<ListClientsResponse, TogglError> {
+    ) -> Result<Vec<crate::toggl_api::responses::TogglClient>, TogglError> {
         // Build query parameters for status and name if needed
         #[derive(Serialize)]
         struct QueryParams<'a> {
@@ -234,7 +240,7 @@ impl TogglClient {
     pub async fn list_projects(
         &self,
         workspace_id: i64,
-    ) -> Result<ListProjectsResponse, TogglError> {
+    ) -> Result<Vec<TogglProject>, TogglError> {
         let endpoint = format!("workspaces/{}/projects", workspace_id);
         self.get_json(&endpoint).await
     }
@@ -250,6 +256,7 @@ impl TogglClient {
             "workspaces/{}/projects/{}/tasks",
             workspace_id, project_id
         );
+        println!("DEBUG");
         self.get_json(&endpoint).await
     }
 

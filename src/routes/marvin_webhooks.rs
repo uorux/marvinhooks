@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::time::{sleep, Sleep};
 use std::{env, sync::Arc, time::Duration};
 
-use crate::{api::client::MarvinClient, cache::cache, models::tasks::{ProjectOrCategory, Task}, toggl_api::client::TogglClient};
+use crate::{api::{client::MarvinClient, requests::{CreateProjectRequest, CreateTaskRequest}}, cache::cache::{self, cache_get, cache_put, TOGGL_CLIENT_CACHE, TOGGL_PROJECT_CACHE, TOGGL_TASK_CACHE}, models::tasks::{ProjectOrCategory, Task}, toggl_api::{client::TogglClient, requests::CreateClientRequest}, WORKSPACE_ID};
 
 /// Main router for Marvin webhooks.
 pub fn router() -> Router {
@@ -124,14 +124,176 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         sleep(Duration::from_secs(1)).await;
     }
 
-    for parent in parents {
-        println!("{:?}", parent);
-    }
+    let workspace_id = match WORKSPACE_ID.get() {
+        Some(workspace_id) => workspace_id,
+        None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
 
-    // Grab full parent tree (from cache)
-    // Select items we want
-    // Construct toggl tree
-    // Start tracking on toggl
+    // Length 0: description is what is being done
+    // Length 1: client [0], project [0], task is what is being done
+    // Length 2: client [0], project [1], task is what is being done
+    // Length 3: client [1], project [2], task is what is being done
+    // Length 4: client [1], project [2], task [3], description is what is being done
+
+    if parents.len() > 0 {
+        let mut client = &parents[0];
+        let mut project = &parents[0];
+        let mut task = &payload.title;
+        let mut description = &"".to_string();
+        if parents.len() > 1 {
+            project = &parents[1];
+        }
+        if parents.len() > 2 {
+            client = &parents[1];
+            project = &parents[2];
+        }
+        if parents.len() > 3 {
+            task = &parents[3];
+            description = &payload.title;
+        }
+
+        let client = match cache_get(Arc::clone(&*TOGGL_CLIENT_CACHE), &client) {
+            Some(client) => client,
+            None => {
+                // List of clients and use that; if not, create our own
+                let clients = match toggl_client.list_clients(*workspace_id, None, None).await {
+                    Ok(clients) => clients,
+                    Err(error) => {
+                        println!("Error fetching clients {}", error);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    },
+                };
+                let mut our_client: Option<i64> = None;
+                for returned_client in clients {
+                    if *client == returned_client.name {
+                        our_client = Some(returned_client.id);
+                    }
+                    cache_put(Arc::clone(&*TOGGL_CLIENT_CACHE), returned_client.name, returned_client.id);
+                }
+                match our_client {
+                    Some(client) => client,
+                    None => {
+                        // Create our own
+                        let request = &CreateClientRequest {
+                            name: client.to_string(),
+                            notes: None
+                        };
+                        let result = toggl_client.create_client(*workspace_id, request).await;
+                        match result {
+                            Ok(client) => client.id,
+                            Err(error) => {
+                                println!("Error creating client {}", error);
+                                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        let project = match cache_get(Arc::clone(&*TOGGL_PROJECT_CACHE), &(client, (*project).clone())) {
+            Some(project) => project,
+            None => {
+                // List of clients and use that; if not, create our own
+                let projects = match toggl_client.list_projects(*workspace_id).await {
+                    Ok(clients) => clients,
+                    Err(error) => {
+                        println!("Error fetching projects {}", error);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    },
+                };
+                let mut our_project: Option<i64> = None;
+                for returned_project in projects {
+                    if *project  == returned_project.name && returned_project.client_id == Some(client) {
+                        our_project = Some(returned_project.id);
+                    }
+                    match returned_project.client_id {
+                        Some(client) => cache_put(Arc::clone(&*TOGGL_PROJECT_CACHE), (client, returned_project.name), returned_project.id),
+                        None => ()
+                    };
+                }
+                match our_project {
+                    Some(project) => project,
+                    None => {
+                        // Create our own
+                        let mut request: crate::toggl_api::requests::CreateProjectRequest = Default::default();
+                        request.active = Some(true);
+                        request.auto_estimates = Some(false);
+                        request.billable = Some(false);
+                        request.color = Some("#ffffff".to_string());
+                        request.is_private = Some(true);
+                        request.name = (*project).clone();
+                        request.client_id = Some(client);
+                        let result = toggl_client.create_project(*workspace_id, &request).await;
+                        match result {
+                            Ok(client) => client.id,
+                            Err(error) => {
+                                println!("Error creating project {}", error);
+                                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        let task = match cache_get(Arc::clone(&*TOGGL_TASK_CACHE), &(project, (*task).clone())) {
+            Some(task) => task,
+            None => {
+                // List of clients and use that; if not, create our own
+                let tasks = match toggl_client.get_project_tasks(*workspace_id, project).await {
+                    Ok(clients) => clients,
+                    Err(error) => {
+                        println!("Error fetching tasks {}", error);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    },
+                };
+                let mut our_task: Option<i64> = None;
+                for returned_task in tasks {
+                    if *task  == returned_task.name {
+                        our_task = Some(returned_task.id);
+                    }
+                    cache_put(Arc::clone(&*TOGGL_TASK_CACHE), (project, returned_task.name), returned_task.id);
+                }
+                match our_task {
+                    Some(task) => task,
+                    None => {
+                        // Create our own
+                        let request = &crate::toggl_api::requests::CreateTaskRequest {
+                            active: Some(true),
+                            estimated_seconds: Some(0),
+                            name: (*task).clone(),
+                            user_id: None,
+                        };
+                        let result = toggl_client.create_task(*workspace_id, project, request).await;
+                        match result {
+                            Ok(task) => task.id,
+                            Err(error) => {
+                                println!("Error creating tasks {}", error);
+                                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        match toggl_client.start_time_entry(*workspace_id, Some(project), Some(task), description).await {
+            Err(error) => {
+                println!("{}", error);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            Ok(_) => ()
+        }
+    } else {
+        match toggl_client.start_time_entry(*workspace_id, None, None, payload.title.as_str()).await {
+            Err(error) => {
+                println!("{}", error);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            Ok(_) => ()
+        }
+    }
 
     Ok("Webhook processed successfully".to_string())
 }
