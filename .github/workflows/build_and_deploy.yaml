@@ -13,7 +13,7 @@ jobs:
           fetch-depth: 0
       - name: Fix determinate systems installer
         run: mkdir -p /lib64
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: otisdog8/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: Build image
         run: nix build .#docker
