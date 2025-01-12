@@ -85,7 +85,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
     let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
 
     // TODO: remove localhost override
-    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token)).with_base_url("http://localhost:12082/api");
+    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token));
 
 
     while parent_id != "root" && parent_id != "unassigned" {
@@ -141,14 +141,15 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         let mut task = &payload.title;
         let mut description = &"".to_string();
         if parents.len() > 1 {
-            project = &parents[1];
+            client = &parents[1];
         }
         if parents.len() > 2 {
-            client = &parents[1];
-            project = &parents[2];
+            project = &parents[0];
         }
         if parents.len() > 3 {
-            task = &parents[3];
+            task = &parents[0];
+            project = &parents[1];
+            client = &parents[parents.len() - 1];
             description = &payload.title;
         }
 

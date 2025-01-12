@@ -45,6 +45,9 @@
 
         dockerImage = pkgs.dockerTools.buildImage {
           name = "marvinhooks";
+          tag = "latest";
+
+          copyToRoot = [ pkgs.cacert ];
           config = {
             Cmd = [ "${myRustBuild}/bin/marvinhooks" ];
           };

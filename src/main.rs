@@ -7,6 +7,7 @@ use axum::{
 use toggl_api::client::TogglClient;
 use tower_http::cors::{Any, CorsLayer};
 use tokio::signal;
+use anyhow::anyhow;
 
 mod api;
 mod toggl_api;
@@ -35,8 +36,8 @@ async fn main() {
         Ok(result) => {
             result.default_workspace_id.unwrap()
         }
-        Err(_) => {
-            panic!("Could not retrieve workspace ID from toggl");
+        Err(err) => {
+            panic!("Could not retrieve workspace ID from toggl: {:#}", anyhow!(err));
         }
     };
     let workspace_id = var_name;

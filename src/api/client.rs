@@ -63,7 +63,8 @@ impl MarvinClient {
         // Use whichever token is available, typically the API token
         if let Some(ref token) = self.api_token {
             req = req.header("X-API-Token", token);
-        } else if let Some(ref token) = self.full_access_token {
+        }
+        if let Some(ref token) = self.full_access_token {
             req = req.header("X-Full-Access-Token", token);
         }
 
@@ -98,7 +99,8 @@ impl MarvinClient {
         // else if we have a full_access_token, use that. 
         if let Some(ref token) = self.api_token {
             req = req.header("X-API-Token", token);
-        } else if let Some(ref token) = self.full_access_token {
+        }
+        if let Some(ref token) = self.full_access_token {
             req = req.header("X-Full-Access-Token", token);
         }
 
@@ -120,7 +122,8 @@ impl MarvinClient {
 
         if let Some(ref token) = self.api_token {
             req = req.header("X-API-Token", token);
-        } else if let Some(ref token) = self.full_access_token {
+        }
+        if let Some(ref token) = self.full_access_token {
             req = req.header("X-Full-Access-Token", token);
         }
 
