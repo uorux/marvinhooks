@@ -44,6 +44,10 @@ async fn require_auth(req: Request<Body>, next: Next) -> Result<Response, Status
             // Correct token => allow the request to continue
             Ok(next.run(req).await)
         }
+        Some(header_value) => {
+            eprintln!("Unauthorized webhook attempt {:#?}", header_value);
+            Err(StatusCode::UNAUTHORIZED)
+        }
         _ => {
             eprintln!("Unauthorized webhook attempt");
             Err(StatusCode::UNAUTHORIZED)
@@ -251,6 +255,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
                 };
                 let mut our_task: Option<i64> = None;
                 for returned_task in tasks {
+                    println!("TASK LOG: {:#?} {}", returned_task, task);
                     if *task  == returned_task.name {
                         our_task = Some(returned_task.id);
                     }
