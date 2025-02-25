@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Represents a single label.
@@ -20,6 +22,8 @@ pub struct Label {
     pub is_action: Option<bool>,
     #[serde(default)]
     pub is_hidden: Option<bool>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// Represents a group of labels.
