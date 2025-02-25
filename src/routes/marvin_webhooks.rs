@@ -161,6 +161,8 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         tags.push(label);
     }
 
+    println!("Tags: {:#?}", tags);
+
     // Length 0: description is what is being done
     // Length 1: client [0], project [0], task is what is being done
     // Length 2: client [0], project [1], task is what is being done

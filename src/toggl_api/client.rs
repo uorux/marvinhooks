@@ -178,7 +178,7 @@ impl TogglClient {
             start: now_utc,
             start_date: None,
             stop: None, // no stop => it's running
-            tag_action: None,
+            tag_action: Some("add".to_string()),
             tag_ids: Some(vec![]),
             tags: Some(tags),
             task_id,
