@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::time::{sleep, Sleep};
 use std::{env, sync::Arc, time::Duration};
 
-use crate::{api::{client::MarvinClient, requests::{CreateProjectRequest, CreateTaskRequest}}, cache::cache::{self, cache_get, cache_put, TOGGL_CLIENT_CACHE, TOGGL_PROJECT_CACHE, TOGGL_TASK_CACHE}, models::tasks::{ProjectOrCategory, Task}, toggl_api::{client::TogglClient, requests::CreateClientRequest}, WORKSPACE_ID};
+use crate::{api::{client::MarvinClient, requests::{CreateProjectRequest, CreateTaskRequest}}, cache::cache::{self, cache_get, cache_put, TOGGL_CLIENT_CACHE, TOGGL_PROJECT_CACHE, TOGGL_TASK_CACHE}, models::tasks::{ProjectOrCategory, Task}, toggl_api::{client::TogglClient, requests::{CreateClientRequest, CreateTagRequest}}, WORKSPACE_ID};
 
 /// Main router for Marvin webhooks.
 pub fn router() -> Router {
@@ -130,6 +130,8 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
 
+    let mut labels: Vec<String> = vec![];
+
     // Collect all labels for passthrough
     let mut tags: Vec<i64> = vec![];
     for id in payload.label_ids {
@@ -158,12 +160,58 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
                 result
             }
         };
-        if label.len() > 0 {
-            if label == "productive" {
-                tags.push(16224246);
+        if label == "" {
+            continue;
+        }
+        let tag = cache::cache_get(Arc::clone(&*cache::TOGGL_TAG_CACHE), &label);
+        let tag = match tag {
+            Some(tag) => tag,
+            None => {
+                let mut result: i64 = -1;
+                // Make the marvin rate limiter happy by waiting 1 second
+                sleep(Duration::from_secs(1)).await;
+                match toggl_client.list_tags(*workspace_id).await {
+                    Ok(tags) => {
+                        for l in tags {
+                            if label == l.name {
+                                result = l.id;
+                            }
+                            cache::cache_put(Arc::clone(&*cache::TOGGL_TAG_CACHE), l.name, l.id);
+                        }
+                    },
+                    Err(err) => {
+                        println!("Error collecting tags: {}", err);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+
+                if (result == -1) {
+                    let tag_request = CreateTagRequest {name: label.clone()};
+                    match toggl_client.create_tag(*workspace_id, &tag_request).await {
+                        Ok(tags) => {
+                            for l in tags {
+                                if label == l.name {
+                                    result = l.id;
+                                }
+                                cache::cache_put(Arc::clone(&*cache::TOGGL_TAG_CACHE), l.name, l.id);
+                            }
+                        },
+                        Err(err) => {
+                            println!("Error collecting tags: {}", err);
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                    }
+                }
+
+                result
             }
+        };
+        if tag != -1 {
+            tags.push(tag);
         }
     }
+
+
 
     println!("Tags: {:#?}", tags);
 

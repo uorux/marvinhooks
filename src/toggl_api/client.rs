@@ -252,6 +252,16 @@ impl TogglClient {
         self.get_json(&endpoint).await
     }
 
+    /// Get a list of projects in the workspace.
+    /// GET /api/v9/workspaces/{workspace_id}/projects
+    pub async fn list_tags(
+        &self,
+        workspace_id: i64,
+    ) -> Result<Vec<Tag>, TogglError> {
+        let endpoint = format!("workspaces/{}/tags", workspace_id);
+        self.get_json(&endpoint).await
+    }
+
     /// Get tasks for a given project.
     /// GET /api/v9/workspaces/{workspace_id}/projects/{project_id}/tasks
     pub async fn get_project_tasks(
@@ -280,6 +290,19 @@ impl TogglClient {
         );
         self.post_json(&endpoint, req).await
     }
+
+    pub async fn create_tag(
+        &self,
+        workspace_id: i64,
+        req: &CreateTagRequest,
+    ) -> Result<Vec<Tag>, TogglError> {
+        let endpoint = format!(
+            "workspaces/{}/tags",
+            workspace_id
+        );
+        self.post_json(&endpoint, req).await
+    }
+
 
     pub async fn stop_time_entry(
         &self,

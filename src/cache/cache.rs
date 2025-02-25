@@ -28,6 +28,10 @@ pub static TOGGL_TASK_CACHE: LazyLock<Cache<(i64, String), i64>> = LazyLock::new
     Arc::new(Mutex::new(HashMap::new()))
 });
 
+pub static TOGGL_TAG_CACHE: LazyLock<Cache<String, i64>> = LazyLock::new(|| {
+    Arc::new(Mutex::new(HashMap::new()))
+});
+
 
 
 pub fn cache_get<K, V>(cache: Cache<K, V>, key: &K) -> Option<V> where K: Eq, K: Hash, V: Clone {

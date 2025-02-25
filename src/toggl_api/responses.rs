@@ -105,3 +105,12 @@ pub struct TimeEntry {
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tag {
+    pub id: i64,
+    pub name: String,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+

@@ -108,6 +108,10 @@ pub struct CreateClientRequest {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateTagRequest {
+    pub name: String,
+}
 // -------------------------
 // GET /api/v9/workspaces/{workspace_id}/clients
 // (no body needed, possibly some query params?)
