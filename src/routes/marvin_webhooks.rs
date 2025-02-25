@@ -131,7 +131,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
     };
 
     // Collect all labels for passthrough
-    let mut tags: Vec<String> = vec![];
+    let mut tags: Vec<i64> = vec![];
     for id in payload.label_ids {
         let label = cache::cache_get(Arc::clone(&*cache::MARVIN_LABEL_CACHE), &id);
         let label = match label {
@@ -159,7 +159,9 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             }
         };
         if label.len() > 0 {
-            tags.push(label);
+            if label == "productive" {
+                tags.push(16224246);
+            }
         }
     }
 

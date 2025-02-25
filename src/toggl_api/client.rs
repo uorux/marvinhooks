@@ -161,7 +161,7 @@ impl TogglClient {
         project_id: Option<i64>,
         task_id: Option<i64>,
         description: &str,
-        tags: Vec<String>,
+        tags: Vec<i64>,
     ) -> Result<TimeEntry, TogglError> {
         // Prepare a "now" in UTC, properly formatted
         let now_utc = chrono::Utc::now().to_rfc3339();
@@ -180,8 +180,8 @@ impl TogglClient {
             start_date: None,
             stop: None, // no stop => it's running
             tag_action: Some("add".to_string()),
-            tag_ids: Some(vec![]),
-            tags: Some(tags),
+            tag_ids: Some(tags),
+            tags: None,
             task_id,
             tid: None,
             user_id: None,
@@ -348,7 +348,7 @@ impl TogglClient {
                 // Convert the difference to milliseconds.
                 let diff_ms = diff.num_milliseconds();
                 let rate = *LEISURE_RATE.lock().unwrap();
-                let time_change = rate * diff_ms as f64;
+                let time_change = -1.0 * rate * diff_ms as f64;
                 for tag in tags {
                     if tag == "productive" {
                         LEISURE_BALANCE.fetch_add(time_change as i64, Ordering::SeqCst);
