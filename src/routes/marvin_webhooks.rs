@@ -319,7 +319,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 
         match toggl_client.start_time_entry(*workspace_id, Some(project), Some(task), description, tags).await {
             Err(error) => {
-                println!("{}", error);
+                println!("Start time entry error: {}", error);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
             Ok(_) => ()
@@ -327,7 +327,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
     } else {
         match toggl_client.start_time_entry(*workspace_id, None, None, payload.title.as_str(), tags).await {
             Err(error) => {
-                println!("{}", error);
+                println!("start time entry error: {}", error);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
             Ok(_) => ()
@@ -354,38 +354,12 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
     let result = toggl_client.stop_current_time_entry().await;
 
     match result {
-        Err(error) => println!("{}", error),
+        Err(error) => println!("Stop current time entry error: {}", error),
         Ok(_) => (),
     }
 
     Ok("Webhook processed successfully".to_string())
 }
-
-/// A second example endpoint that doesn’t do any type-based routing.
-async fn complete_task(Json(payload): Json<Value>) -> Result<String, StatusCode> {
-    println!("Webhook Called");
-
-    let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
-        Ok(val) => val,
-        Err(_) => {
-            eprintln!("TOGGL_API_TOKEN is not set!");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
-    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
-
-    let result = toggl_client.stop_current_time_entry().await;
-
-    match result {
-        Err(error) => println!("{}", error),
-        Ok(_) => (),
-    }
-
-    Ok("Webhook processed successfully".to_string())
-
-}
-
 
 /// A second example endpoint that doesn’t do any type-based routing.
 async fn other_webhook(Json(payload): Json<Value>) -> Result<String, StatusCode> {

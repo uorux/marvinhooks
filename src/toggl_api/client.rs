@@ -55,6 +55,7 @@ impl TogglClient {
             .request(Method::GET, &url)
             .basic_auth(&self.username, Some(&self.password));
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(TogglError::StatusCodeError(resp.status()));
         }
@@ -73,6 +74,7 @@ impl TogglClient {
             .basic_auth(&self.username, Some(&self.password))
             .query(query);
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(TogglError::StatusCodeError(resp.status()));
         }
@@ -91,6 +93,7 @@ impl TogglClient {
             .basic_auth(&self.username, Some(&self.password))
             .json(body);
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             println!("{}", resp.text().await.unwrap());
             return Err(TogglError::StatusCodeError(StatusCode::INTERNAL_SERVER_ERROR));
@@ -112,6 +115,7 @@ impl TogglClient {
             .basic_auth(&self.username, Some(&self.password));
 
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(TogglError::StatusCodeError(resp.status()));
         }

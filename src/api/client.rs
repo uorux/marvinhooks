@@ -70,6 +70,7 @@ impl MarvinClient {
 
 
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(ApiError::StatusCodeError(resp.status()));
         }
@@ -103,6 +104,7 @@ impl MarvinClient {
         }
 
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(ApiError::StatusCodeError(resp.status()));
         }
@@ -126,6 +128,7 @@ impl MarvinClient {
         }
 
         let resp = req.send().await?;
+        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(ApiError::StatusCodeError(resp.status()));
         }
