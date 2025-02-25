@@ -11,7 +11,8 @@ pub struct Label {
     pub title: String,
     #[serde(default)]
     pub group_id: Option<String>,
-    pub created_at: i64,
+    #[serde(default)]
+    pub created_at: Option<i64>,
     #[serde(default)]
     pub color: Option<String>,
     #[serde(default)]
