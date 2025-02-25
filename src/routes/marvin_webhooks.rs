@@ -158,7 +158,9 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
                 result
             }
         };
-        tags.push(label);
+        if label.len() > 0 {
+            tags.push(label);
+        }
     }
 
     println!("Tags: {:#?}", tags);

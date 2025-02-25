@@ -92,6 +92,7 @@ impl TogglClient {
             .request(Method::POST, &url)
             .basic_auth(&self.username, Some(&self.password))
             .json(body);
+        println!("{:#?}", req);
         let resp = req.send().await?;
         println!("{:#?}", resp);
         if !resp.status().is_success() {
