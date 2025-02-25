@@ -295,7 +295,7 @@ impl TogglClient {
         &self,
         workspace_id: i64,
         req: &CreateTagRequest,
-    ) -> Result<Vec<Tag>, TogglError> {
+    ) -> Result<Tag, TogglError> {
         let endpoint = format!(
             "workspaces/{}/tags",
             workspace_id

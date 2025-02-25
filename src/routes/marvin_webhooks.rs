@@ -185,19 +185,15 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
                     }
                 }
 
-                if (result == -1) {
+                if result == -1 {
                     let tag_request = CreateTagRequest {name: label.clone()};
                     match toggl_client.create_tag(*workspace_id, &tag_request).await {
-                        Ok(tags) => {
-                            for l in tags {
-                                if label == l.name {
-                                    result = l.id;
-                                }
-                                cache::cache_put(Arc::clone(&*cache::TOGGL_TAG_CACHE), l.name, l.id);
-                            }
+                        Ok(tag) => {
+                            result = tag.id;
+                            cache::cache_put(Arc::clone(&*cache::TOGGL_TAG_CACHE), tag.name, tag.id);
                         },
                         Err(err) => {
-                            println!("Error collecting tags: {}", err);
+                            println!("Error adding tag: {}", err);
                             return Err(StatusCode::INTERNAL_SERVER_ERROR);
                         }
                     }
