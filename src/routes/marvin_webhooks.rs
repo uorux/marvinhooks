@@ -38,15 +38,12 @@ async fn require_auth(req: Request<Body>, next: Next) -> Result<Response, Status
     };
 
     // Check the Authorization header
+    eprintln!("Headers: {:#?}", req.headers());
     let auth_header = req.headers().get("Authorization");
     match auth_header {
         Some(header_value) if header_value == token.as_str() => {
             // Correct token => allow the request to continue
             Ok(next.run(req).await)
-        }
-        Some(header_value) => {
-            eprintln!("Unauthorized webhook attempt {:#?}", header_value);
-            Err(StatusCode::UNAUTHORIZED)
         }
         _ => {
             eprintln!("Unauthorized webhook attempt");
@@ -133,6 +130,37 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
 
+    // Collect all labels for passthrough
+    let mut tags: Vec<String> = vec![];
+    for id in payload.label_ids {
+        let label = cache::cache_get(Arc::clone(&*cache::MARVIN_LABEL_CACHE), &id);
+        let label = match label {
+            Some(label) => label,
+            None => {
+                let mut result: String = "".to_string();
+                // Make the marvin rate limiter happy by waiting 1 second
+                sleep(Duration::from_secs(1)).await;
+                match marvin_client.get_labels().await {
+                    Ok(labels) => {
+                        for l in labels {
+                            if id == l.title {
+                                result = l.title.to_string();
+                            }
+                            cache::cache_put(Arc::clone(&*cache::MARVIN_LABEL_CACHE), l.id, l.title);
+                        }
+                    },
+                    Err(err) => {
+                        println!("Error collecting labels: {}", err);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+
+                result
+            }
+        };
+        tags.push(label);
+    }
+
     // Length 0: description is what is being done
     // Length 1: client [0], project [0], task is what is being done
     // Length 2: client [0], project [1], task is what is being done
@@ -142,6 +170,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
     if parents.len() > 0 {
         let mut client = &parents[0];
         let mut project = &parents[0];
+
         let mut task = &payload.title;
         let mut description = &"".to_string();
         if parents.len() > 1 {
@@ -156,6 +185,11 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             client = &parents[parents.len() - 1];
             description = &payload.title;
         }
+
+        let client = &str::trim(client).to_string();
+        let project = &str::trim(project).to_string();
+        let task = &str::trim(task).to_string();
+        let description = &str::trim(description).to_string();
 
         let client = match cache_get(Arc::clone(&*TOGGL_CLIENT_CACHE), &client) {
             Some(client) => client,
@@ -255,7 +289,6 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
                 };
                 let mut our_task: Option<i64> = None;
                 for returned_task in tasks {
-                    println!("TASK LOG: {:#?} {}", returned_task, task);
                     if *task  == returned_task.name {
                         our_task = Some(returned_task.id);
                     }
@@ -284,7 +317,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             }
         };
 
-        match toggl_client.start_time_entry(*workspace_id, Some(project), Some(task), description).await {
+        match toggl_client.start_time_entry(*workspace_id, Some(project), Some(task), description, tags).await {
             Err(error) => {
                 println!("{}", error);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -292,7 +325,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             Ok(_) => ()
         }
     } else {
-        match toggl_client.start_time_entry(*workspace_id, None, None, payload.title.as_str()).await {
+        match toggl_client.start_time_entry(*workspace_id, None, None, payload.title.as_str(), tags).await {
             Err(error) => {
                 println!("{}", error);
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -326,6 +359,31 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
     }
 
     Ok("Webhook processed successfully".to_string())
+}
+
+/// A second example endpoint that doesn’t do any type-based routing.
+async fn complete_task(Json(payload): Json<Value>) -> Result<String, StatusCode> {
+    println!("Webhook Called");
+
+    let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("TOGGL_API_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
+
+    let result = toggl_client.stop_current_time_entry().await;
+
+    match result {
+        Err(error) => println!("{}", error),
+        Ok(_) => (),
+    }
+
+    Ok("Webhook processed successfully".to_string())
+
 }
 
 

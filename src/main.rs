@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, env, sync::OnceLock};
+use std::{cell::OnceCell, env, sync::{atomic::AtomicI64, LazyLock, Mutex, OnceLock}};
 
 use axum::{
     Router,
@@ -16,6 +16,8 @@ mod models;
 mod cache;
 
 static WORKSPACE_ID: OnceLock<i64> = OnceLock::new();
+static LEISURE_BALANCE: AtomicI64 = AtomicI64::new(0);
+static LEISURE_RATE: LazyLock<Mutex<f64>> = LazyLock::new(|| {Mutex::new(1.0/3.0)});
 
 #[tokio::main]
 async fn main() {
@@ -46,7 +48,8 @@ async fn main() {
     // Build our application by composing routes
     let app = Router::new()
         .merge(routes::marvin_webhooks::router()) // Our Marvin webhook routes
-        // Example of an entirely different route: 
+        .merge(routes::third_time::router()) // Our Third Time webhook routes
+    // Example of an entirely different route: 
         .route("/health", get(|| async { "OK" }))
         // Add a CORS layer so Marvin’s client can POST from https://app.amazingmarvin.com
         .layer(

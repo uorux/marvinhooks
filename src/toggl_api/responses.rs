@@ -100,7 +100,8 @@ pub struct TimeEntry {
     pub project_id: Option<i64>,
     #[serde(default)]
     pub workspace_id: Option<i64>,
-
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }

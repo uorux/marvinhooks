@@ -12,6 +12,10 @@ pub static MARVIN_PROJECT_CACHE: LazyLock<Cache<String, (String, String)>> = Laz
     Arc::new(Mutex::new(HashMap::new()))
 });
 
+pub static MARVIN_LABEL_CACHE: LazyLock<Cache<String, String>> = LazyLock::new(|| {
+    Arc::new(Mutex::new(HashMap::new()))
+});
+
 pub static TOGGL_CLIENT_CACHE: LazyLock<Cache<String, i64>> = LazyLock::new(|| {
     Arc::new(Mutex::new(HashMap::new()))
 });

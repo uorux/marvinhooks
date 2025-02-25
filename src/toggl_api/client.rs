@@ -1,8 +1,13 @@
 use crate::toggl_api::error::TogglError;
 use crate::toggl_api::requests::*;
 use crate::toggl_api::responses::*;
+use crate::LEISURE_BALANCE;
+use crate::LEISURE_RATE;
+use chrono::DateTime;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use reqwest::{Client as HttpClient, Method, StatusCode};
+use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 
 /// The default base URL for Toggl Track API v9.
@@ -50,7 +55,6 @@ impl TogglClient {
             .request(Method::GET, &url)
             .basic_auth(&self.username, Some(&self.password));
         let resp = req.send().await?;
-        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(TogglError::StatusCodeError(resp.status()));
         }
@@ -69,7 +73,6 @@ impl TogglClient {
             .basic_auth(&self.username, Some(&self.password))
             .query(query);
         let resp = req.send().await?;
-        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(TogglError::StatusCodeError(resp.status()));
         }
@@ -87,9 +90,7 @@ impl TogglClient {
             .request(Method::POST, &url)
             .basic_auth(&self.username, Some(&self.password))
             .json(body);
-        println!("{:#?}", req);
         let resp = req.send().await?;
-        println!("{:#?}", resp);
         if !resp.status().is_success() {
             println!("{}", resp.text().await.unwrap());
             return Err(TogglError::StatusCodeError(StatusCode::INTERNAL_SERVER_ERROR));
@@ -155,6 +156,7 @@ impl TogglClient {
         project_id: Option<i64>,
         task_id: Option<i64>,
         description: &str,
+        tags: Vec<String>,
     ) -> Result<TimeEntry, TogglError> {
         // Prepare a "now" in UTC, properly formatted
         let now_utc = chrono::Utc::now().to_rfc3339();
@@ -173,8 +175,8 @@ impl TogglClient {
             start_date: None,
             stop: None, // no stop => it's running
             tag_action: None,
-            tag_ids: Some(vec![]),
-            tags: None,
+            tag_ids: None,
+            tags: Some(tags),
             task_id,
             tid: None,
             user_id: None,
@@ -256,7 +258,6 @@ impl TogglClient {
             "workspaces/{}/projects/{}/tasks",
             workspace_id, project_id
         );
-        println!("DEBUG");
         self.get_json(&endpoint).await
     }
 
@@ -328,7 +329,32 @@ impl TogglClient {
             None => return Ok(None), // No current entry
         };
 
-        println!("{:#?}", current_te);
+        // Update third time count: don't update if neutral | no tags, add if productive, remove if unproductive
+        // Third time rate should be an envvar so I don't need to rebuild
+        match current_te.tags {
+            Some(tags) => {
+                let target: DateTime<Utc> = current_te.start
+                    .parse()
+                    .expect("Invalid datetime format");
+                // Get the current time in UTC.
+                let now: DateTime<Utc> = Utc::now();
+                // Compute the difference as a chrono Duration.
+                let diff = target.signed_duration_since(now);
+                // Convert the difference to milliseconds.
+                let diff_ms = diff.num_milliseconds();
+                let rate = *LEISURE_RATE.lock().unwrap();
+                let time_change = rate * diff_ms as f64;
+                for tag in tags {
+                    if tag == "productive" {
+                        LEISURE_BALANCE.fetch_add(time_change as i64, Ordering::SeqCst);
+                    } else if tag == "unproductive" {
+                        LEISURE_BALANCE.fetch_sub(time_change as i64, Ordering::SeqCst);
+                    }
+                }
+            },
+            None => ()
+        }
+
 
         // 3) Extract workspace
         let ws_id = match current_te.workspace_id {

@@ -68,10 +68,8 @@ impl MarvinClient {
             req = req.header("X-Full-Access-Token", token);
         }
 
-        println!("{:#?}", req);
 
         let resp = req.send().await?;
-        println!("{:#?}", resp);
         if !resp.status().is_success() {
             return Err(ApiError::StatusCodeError(resp.status()));
         }
