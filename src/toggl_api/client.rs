@@ -347,7 +347,7 @@ impl TogglClient {
         }
     }
 
-    pub async fn stop_current_time_entry(&self) -> Result<Option<TimeEntry>, TogglError> {
+    pub async fn stop_current_time_entry(&self, productivity_override: Option<bool>) -> Result<Option<TimeEntry>, TogglError> {
         // 1) Find current time entry
         let current_te_opt = self.get_current_time_entry().await?;
 
@@ -357,30 +357,40 @@ impl TogglClient {
             None => return Ok(None), // No current entry
         };
 
-        // Update third time count: don't update if neutral | no tags, add if productive, remove if unproductive
+        let target: DateTime<Utc> = current_te.start
+            .parse()
+            .expect("Invalid datetime format");
+        // Get the current time in UTC.
+        let now: DateTime<Utc> = Utc::now();
+        // Compute the difference as a chrono Duration.
+        let diff = target.signed_duration_since(now);
+        // Convert the difference to milliseconds.
+        let diff_ms = diff.num_milliseconds();
+        let rate = *LEISURE_RATE.lock().unwrap();
+        let time_change = -1.0 * rate * diff_ms as f64;
+       // Update third time count: don't update if neutral | no tags, add if productive, remove if unproductive
         // Third time rate should be an envvar so I don't need to rebuild
-        match current_te.tags {
-            Some(tags) => {
-                let target: DateTime<Utc> = current_te.start
-                    .parse()
-                    .expect("Invalid datetime format");
-                // Get the current time in UTC.
-                let now: DateTime<Utc> = Utc::now();
-                // Compute the difference as a chrono Duration.
-                let diff = target.signed_duration_since(now);
-                // Convert the difference to milliseconds.
-                let diff_ms = diff.num_milliseconds();
-                let rate = *LEISURE_RATE.lock().unwrap();
-                let time_change = -1.0 * rate * diff_ms as f64;
-                for tag in tags {
-                    if tag == "productive" {
-                        LEISURE_BALANCE.fetch_add(time_change as i64, Ordering::SeqCst);
-                    } else if tag == "unproductive" {
-                        LEISURE_BALANCE.fetch_add(diff_ms as i64, Ordering::SeqCst);
-                    }
+        match productivity_override {
+            None => {
+                match current_te.tags {
+                    Some(tags) => {
+                         for tag in tags {
+                            if tag == "productive" {
+                                LEISURE_BALANCE.fetch_add(time_change as i64, Ordering::SeqCst);
+                            } else if tag == "unproductive" {
+                                LEISURE_BALANCE.fetch_add(diff_ms as i64, Ordering::SeqCst);
+                            }
+                        }
+                    },
+                    None => ()
                 }
-            },
-            None => ()
+            }
+            Some(true) => {
+                LEISURE_BALANCE.fetch_add(time_change as i64, Ordering::SeqCst);
+            }
+            Some(false) => {
+                LEISURE_BALANCE.fetch_add(diff_ms as i64, Ordering::SeqCst);
+            }
         }
 
 

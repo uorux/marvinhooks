@@ -391,6 +391,22 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> {
     println!("Webhook Called");
 
+    let marvin_api_token = match env::var("MARVIN_API_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("MARVIN_API_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let marvin_full_access_token = match env::var("MARVIN_FULL_ACCESS_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("MARVIN_FULL_ACCESS_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
     let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
         Ok(val) => val,
         Err(_) => {
@@ -401,7 +417,54 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
 
     let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
 
-    let result = toggl_client.stop_current_time_entry().await;
+    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token));
+
+    // Collect all labels for passthrough
+    let mut labels: Vec<String> = vec![];
+    for id in payload.label_ids {
+        let label = cache::cache_get(Arc::clone(&*cache::MARVIN_LABEL_CACHE), &id);
+        let label = match label {
+            Some(label) => label,
+            None => {
+                let mut result: String = "".to_string();
+                // Make the marvin rate limiter happy by waiting 1 second
+                sleep(Duration::from_secs(1)).await;
+                match marvin_client.get_labels().await {
+                    Ok(labels) => {
+                        for l in labels {
+                            if id == l.title {
+                                result = l.title.to_string();
+                            }
+                            cache::cache_put(Arc::clone(&*cache::MARVIN_LABEL_CACHE), l.id, l.title);
+                        }
+                    },
+                    Err(err) => {
+                        println!("Error collecting labels: {}", err);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+
+                result
+            }
+        };
+        if label != "" {
+            labels.push(label);
+        }
+    }
+
+    println!("Labels: {:#?}", labels);
+
+    let mut productivity_override = None;
+    for label in labels {
+        if label == "productive" {
+            productivity_override = Some(true);
+        }
+        if label == "unproductive" {
+            productivity_override = Some(false);
+        }
+    }
+
+    let result = toggl_client.stop_current_time_entry(productivity_override).await;
 
     match result {
         Err(error) => println!("Stop current time entry error: {}", error),
