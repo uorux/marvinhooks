@@ -456,10 +456,10 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
 
     let mut productivity_override = None;
     for label in labels {
-        if label == "productive" {
+        if label == "productiveOverride" {
             productivity_override = Some(true);
         }
-        if label == "unproductive" {
+        if label == "unproductiveOverride" {
             productivity_override = Some(false);
         }
     }
