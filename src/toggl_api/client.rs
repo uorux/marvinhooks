@@ -376,7 +376,7 @@ impl TogglClient {
                     if tag == "productive" {
                         LEISURE_BALANCE.fetch_add(time_change as i64, Ordering::SeqCst);
                     } else if tag == "unproductive" {
-                        LEISURE_BALANCE.fetch_sub(time_change as i64, Ordering::SeqCst);
+                        LEISURE_BALANCE.fetch_add(diff_ms as i64, Ordering::SeqCst);
                     }
                 }
             },
