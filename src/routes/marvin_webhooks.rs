@@ -145,7 +145,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
                 match marvin_client.get_labels().await {
                     Ok(labels) => {
                         for l in labels {
-                            if id == l.title {
+                            if id == l.id {
                                 result = l.title.to_string();
                             }
                             cache::cache_put(Arc::clone(&*cache::MARVIN_LABEL_CACHE), l.id, l.title);
@@ -432,7 +432,7 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
                 match marvin_client.get_labels().await {
                     Ok(labels) => {
                         for l in labels {
-                            if id == l.title {
+                            if id == l.id {
                                 result = l.title.to_string();
                             }
                             cache::cache_put(Arc::clone(&*cache::MARVIN_LABEL_CACHE), l.id, l.title);
