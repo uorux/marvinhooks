@@ -367,6 +367,14 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             }
         };
 
+        let result = toggl_client.stop_current_time_entry(None).await;
+
+        match result {
+            Err(error) => println!("Stop current time entry error: {}", error),
+            Ok(_) => (),
+        }
+
+
         match toggl_client.start_time_entry(*workspace_id, Some(project), Some(task), description, tags).await {
             Err(error) => {
                 println!("Start time entry error: {}", error);
@@ -375,6 +383,14 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             Ok(_) => ()
         }
     } else {
+        let result = toggl_client.stop_current_time_entry(None).await;
+
+        match result {
+            Err(error) => println!("Stop current time entry error: {}", error),
+            Ok(_) => (),
+        }
+
+
         match toggl_client.start_time_entry(*workspace_id, None, None, payload.title.as_str(), tags).await {
             Err(error) => {
                 println!("start time entry error: {}", error);
