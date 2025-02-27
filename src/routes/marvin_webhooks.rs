@@ -213,7 +213,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 
     // Length 0: description is what is being done
     // Length 1: client [0], project [0], task is what is being done
-    // Length 2: client [0], project [1], task is what is being done
+    // Length 2: client [1], project [1], task is what is being done
     // Length 3: client [1], project [2], task is what is being done
     // Length 4: client [1], project [2], task [3], description is what is being done
 
@@ -223,11 +223,12 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 
         let mut task = &payload.title;
         let mut description = &"".to_string();
-        if parents.len() > 1 {
-            client = &parents[1];
+        if parents.len() == 2 {
+            client = &parents[0];
         }
-        if parents.len() > 2 {
+        if parents.len() == 3 {
             project = &parents[0];
+            client = &parents[1];
         }
         if parents.len() > 3 {
             task = &parents[0];
