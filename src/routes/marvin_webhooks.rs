@@ -61,7 +61,8 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 
     let marvin_api_token = match env::var("MARVIN_API_TOKEN") {
         Ok(val) => val,
-        Err(_) => {
+        
+Err(_) => {
             eprintln!("MARVIN_API_TOKEN is not set!");
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
@@ -222,19 +223,24 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         let mut project = &parents[0];
 
         let mut task = &payload.title;
-        let mut description = &"".to_string();
-        if parents.len() == 2 {
+        let description = &payload.title;
+        if parents.len() == 1 {
             client = &parents[0];
+            project = &parents[0];
+        }
+        if parents.len() == 2 {
+            client = &parents[1];
+            project = &parents[0];
         }
         if parents.len() == 3 {
-            project = &parents[0];
-            client = &parents[1];
+            task = &parents[0];
+            project = &parents[1];
+            client = &parents[2];
         }
         if parents.len() > 3 {
             task = &parents[0];
             project = &parents[1];
             client = &parents[parents.len() - 1];
-            description = &payload.title;
         }
 
         let client = &str::trim(client).to_string();

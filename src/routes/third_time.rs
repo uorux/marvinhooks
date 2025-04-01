@@ -94,7 +94,8 @@ async fn change_rate(
 
 // GET /get-balance
 async fn get_balance() -> Result<String, StatusCode> {
-    Ok(LEISURE_BALANCE.load(Ordering::SeqCst).to_string())
+    let amount = LEISURE_BALANCE.load(Ordering::SeqCst) / 1000;
+    Ok(amount.to_string())
 }
 
 // GET /get-rate
