@@ -106,7 +106,7 @@ async fn get_rate() -> Result<String, StatusCode> {
 }
 
 // GET /get-rate
-async fn stop_current() -> Result<(), StatusCode> {
+async fn stop_current() -> Result<String, StatusCode> {
     let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
         Ok(val) => val,
         Err(_) => {
@@ -126,5 +126,5 @@ async fn stop_current() -> Result<(), StatusCode> {
         Ok(_) => (),
     }
 
-    Ok(())
+    Ok("".to_string())
 }
