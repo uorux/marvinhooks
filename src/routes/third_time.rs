@@ -17,6 +17,7 @@ pub fn router() -> Router {
         .route("/change-rate", post(change_rate))
         .route("/get-balance", get(get_balance))
         .route("/get-rate", get(get_rate))
+        .route("/stop-current", get(stop_current))
         .layer(middleware::from_fn(require_auth))
 }
 
@@ -102,4 +103,28 @@ async fn get_balance() -> Result<String, StatusCode> {
 async fn get_rate() -> Result<String, StatusCode> {
     let rate = LEISURE_RATE.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(rate.to_string())
+}
+
+// GET /get-rate
+async fn stop_current() -> Result<(), StatusCode> {
+    let toggl_api_token = match env::var("TOGGL_API_TOKEN") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("TOGGL_API_TOKEN is not set!");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
+
+    let result = toggl_client
+        .stop_current_time_entry(None)
+        .await;
+
+    match result {
+        Err(error) => println!("Stop current time entry error: {}", error),
+        Ok(_) => (),
+    }
+
+    Ok(())
 }
