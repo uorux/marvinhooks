@@ -6,6 +6,7 @@ use axum::{
     response::Response,
     routing::post,
 };
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{env, sync::Arc, time::Duration};
@@ -26,6 +27,16 @@ use crate::{
         requests::{CreateClientRequest, CreateTagRequest},
     },
 };
+
+/// Removes timestamp prefixes like "11:55 am" or "6:10 pm" from the beginning of task names.
+/// Examples:
+///   "11:55 am blah blah blah" -> "blah blah blah"
+///   "6:10 pm Week 1: ISA design" -> "Week 1: ISA design"
+fn remove_timestamp_prefix(text: &str) -> String {
+    // Pattern matches: digits:digits followed by optional space and am/pm, then a space
+    let re = Regex::new(r"^\d{1,2}:\d{2}\s*(?:am|pm|AM|PM)\s+").unwrap();
+    re.replace(text, "").to_string()
+}
 
 /// Main router for Marvin webhooks.
 pub fn router() -> Router {
@@ -132,7 +143,7 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             parent_id,
             parent.clone(),
         );
-        parents.push(parent.0);
+        parents.push(remove_timestamp_prefix(&parent.0));
         parent_id = parent.1;
         // Make the marvin rate limiter happy by waiting 1 second
         sleep(Duration::from_secs(1)).await;
@@ -263,10 +274,10 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             client = &parents[parents.len() - 1];
         }
 
-        let client = &str::trim(client).to_string();
-        let project = &str::trim(project).to_string();
-        let task = task.map(|x| str::trim(x).to_string());
-        let description = &str::trim(description).to_string();
+        let client = &remove_timestamp_prefix(str::trim(client));
+        let project = &remove_timestamp_prefix(str::trim(project));
+        let task = task.map(|x| remove_timestamp_prefix(str::trim(x)));
+        let description = &remove_timestamp_prefix(str::trim(description));
 
         let client = match cache_get(Arc::clone(&*TOGGL_CLIENT_CACHE), &client) {
             Some(client) => client,
@@ -445,8 +456,9 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
             Ok(_) => (),
         }
 
+        let cleaned_title = remove_timestamp_prefix(payload.title.trim());
         match toggl_client
-            .start_time_entry(*workspace_id, None, None, payload.title.as_str(), tags)
+            .start_time_entry(*workspace_id, None, None, &cleaned_title, tags)
             .await
         {
             Err(error) => {
