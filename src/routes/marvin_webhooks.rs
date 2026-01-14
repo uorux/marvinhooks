@@ -20,6 +20,7 @@ use crate::{
     },
     cache::cache::{
         self, TOGGL_CLIENT_CACHE, TOGGL_PROJECT_CACHE, TOGGL_TASK_CACHE, cache_get, cache_put,
+        log_toggl_cache_state,
     },
     models::tasks::{ProjectOrCategory, Task},
     toggl_api::{
@@ -58,6 +59,12 @@ async fn resolve_marvin_task_to_toggl(
     workspace_id: i64,
     create_if_missing: bool,
 ) -> Result<ResolvedTogglIds, StatusCode> {
+    println!(
+        "=== resolve_marvin_task_to_toggl ===\nTask: '{}'\nParent ID: '{}'\ncreate_if_missing: {}",
+        payload.title, payload.parent_id, create_if_missing
+    );
+    log_toggl_cache_state();
+
     // Walk parent hierarchy to collect parent names
     let mut parent_id = payload.parent_id.clone();
     let mut parents: Vec<String> = vec![];
@@ -93,6 +100,8 @@ async fn resolve_marvin_task_to_toggl(
         parent_id = parent.1;
         sleep(Duration::from_secs(1)).await;
     }
+
+    println!("Parent hierarchy (len={}): {:?}", parents.len(), parents);
 
     // Collect tags from labels
     let mut tags: Vec<i64> = vec![];
@@ -196,6 +205,11 @@ async fn resolve_marvin_task_to_toggl(
     let project_name = remove_timestamp_prefix(project_name.trim());
     let task_name = task_name.map(|t| remove_timestamp_prefix(t.trim()));
     let description = remove_timestamp_prefix(payload.title.trim());
+
+    println!(
+        "Resolved names -> client: '{}', project: '{}', task: {:?}, description: '{}'",
+        client_name, project_name, task_name, description
+    );
 
     // Resolve client ID
     let client_id = match cache_get(Arc::clone(&*TOGGL_CLIENT_CACHE), &client_name) {
@@ -329,6 +343,11 @@ async fn resolve_marvin_task_to_toggl(
         }
         _ => None,
     };
+
+    println!(
+        "=== Resolved Toggl IDs ===\nclient_id: {:?}\nproject_id: {:?}\ntask_id: {:?}\ndescription: '{}'\ntags: {:?}",
+        client_id, project_id, task_id, description, tags
+    );
 
     Ok(ResolvedTogglIds {
         client_id,

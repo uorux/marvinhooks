@@ -13,7 +13,16 @@ pub struct MeResponse {
     #[serde(default)]
     pub default_workspace_id: Option<i64>,
 
-    // Many more fields if you like (clients, projects, tasks, etc. if with_related_data=true)
+    // Related data fields (populated when with_related_data=true)
+    #[serde(default)]
+    pub clients: Option<Vec<TogglClient>>,
+    #[serde(default)]
+    pub projects: Option<Vec<TogglProject>>,
+    #[serde(default)]
+    pub tasks: Option<Vec<TogglTask>>,
+    #[serde(default)]
+    pub tags: Option<Vec<Tag>>,
+
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }

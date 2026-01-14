@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, env, sync::{atomic::AtomicI64, LazyLock, Mutex, OnceLock}};
+use std::{env, sync::{atomic::AtomicI64, Arc, LazyLock, Mutex, OnceLock}};
 
 use axum::{
     Router,
@@ -14,6 +14,11 @@ mod toggl_api;
 mod routes; // bring in our `routes` module
 mod models;
 mod cache;
+
+use cache::cache::{
+    TOGGL_CLIENT_CACHE, TOGGL_PROJECT_CACHE, TOGGL_TASK_CACHE, TOGGL_TAG_CACHE,
+    cache_put, log_toggl_cache_state,
+};
 
 static WORKSPACE_ID: OnceLock<i64> = OnceLock::new();
 static LEISURE_BALANCE: AtomicI64 = AtomicI64::new(0);
@@ -33,17 +38,66 @@ async fn main() {
 
     let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
 
-    let result = toggl_client.get_me(None).await;
-    let var_name = match result {
-        Ok(result) => {
-            result.default_workspace_id.unwrap()
-        }
+    // Fetch user data with related data to populate caches
+    let result = toggl_client.get_me(Some(true)).await;
+    let me_response = match result {
+        Ok(result) => result,
         Err(err) => {
-            panic!("Could not retrieve workspace ID from toggl: {:#}", anyhow!(err));
+            panic!("Could not retrieve user data from toggl: {:#}", anyhow!(err));
         }
     };
-    let workspace_id = var_name;
+
+    let workspace_id = me_response.default_workspace_id.unwrap();
     WORKSPACE_ID.set(workspace_id).unwrap();
+
+    // Populate caches from the /me response
+    println!("Initializing Toggl caches from /me response...");
+
+    // Cache clients
+    if let Some(clients) = me_response.clients {
+        println!("Caching {} clients", clients.len());
+        for client in clients {
+            cache_put(Arc::clone(&*TOGGL_CLIENT_CACHE), client.name, client.id);
+        }
+    }
+
+    // Cache projects (keyed by client_id + name)
+    if let Some(projects) = me_response.projects {
+        println!("Caching {} projects", projects.len());
+        for project in projects {
+            if let Some(client_id) = project.client_id {
+                cache_put(
+                    Arc::clone(&*TOGGL_PROJECT_CACHE),
+                    (client_id, project.name),
+                    project.id,
+                );
+            }
+        }
+    }
+
+    // Cache tasks (keyed by project_id + name)
+    if let Some(tasks) = me_response.tasks {
+        println!("Caching {} tasks", tasks.len());
+        for task in tasks {
+            if let Some(project_id) = task.project_id {
+                cache_put(
+                    Arc::clone(&*TOGGL_TASK_CACHE),
+                    (project_id, task.name),
+                    task.id,
+                );
+            }
+        }
+    }
+
+    // Cache tags
+    if let Some(tags) = me_response.tags {
+        println!("Caching {} tags", tags.len());
+        for tag in tags {
+            cache_put(Arc::clone(&*TOGGL_TAG_CACHE), tag.name, tag.id);
+        }
+    }
+
+    log_toggl_cache_state();
 
     // Build our application by composing routes
     let app = Router::new()
