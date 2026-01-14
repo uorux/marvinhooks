@@ -38,6 +38,307 @@ fn remove_timestamp_prefix(text: &str) -> String {
     re.replace(text, "").to_string()
 }
 
+/// Resolved Toggl IDs from a Marvin task hierarchy.
+#[derive(Debug, Clone)]
+struct ResolvedTogglIds {
+    client_id: Option<i64>,
+    project_id: Option<i64>,
+    task_id: Option<i64>,
+    description: String,
+    tags: Vec<i64>,
+}
+
+/// Resolves a Marvin Task to Toggl IDs by walking the parent hierarchy.
+/// If `create_if_missing` is true, creates missing clients/projects/tasks in Toggl.
+/// If false, returns None for IDs that don't exist.
+async fn resolve_marvin_task_to_toggl(
+    payload: &Task,
+    marvin_client: &MarvinClient,
+    toggl_client: &TogglClient,
+    workspace_id: i64,
+    create_if_missing: bool,
+) -> Result<ResolvedTogglIds, StatusCode> {
+    // Walk parent hierarchy to collect parent names
+    let mut parent_id = payload.parent_id.clone();
+    let mut parents: Vec<String> = vec![];
+
+    while parent_id != "root" && parent_id != "unassigned" {
+        let parent = cache::cache_get(Arc::clone(&*cache::MARVIN_PROJECT_CACHE), &parent_id);
+        let parent = match parent {
+            Some(parent) => parent,
+            None => match marvin_client.read_doc(&parent_id).await {
+                Ok(doc) => {
+                    let title = match doc.extra.get("title") {
+                        Some(Value::String(title)) => title.clone(),
+                        _ => return Err(StatusCode::SERVICE_UNAVAILABLE),
+                    };
+                    let parent = match doc.extra.get("parentId") {
+                        Some(Value::String(parent)) => parent.clone(),
+                        _ => return Err(StatusCode::SERVICE_UNAVAILABLE),
+                    };
+                    (title, parent)
+                }
+                Err(err) => {
+                    println!("{}", err);
+                    return Err(StatusCode::SERVICE_UNAVAILABLE);
+                }
+            },
+        };
+        cache::cache_put(
+            Arc::clone(&*cache::MARVIN_PROJECT_CACHE),
+            parent_id,
+            parent.clone(),
+        );
+        parents.push(remove_timestamp_prefix(&parent.0));
+        parent_id = parent.1;
+        sleep(Duration::from_secs(1)).await;
+    }
+
+    // Collect tags from labels
+    let mut tags: Vec<i64> = vec![];
+    for id in &payload.label_ids {
+        let label = cache::cache_get(Arc::clone(&*cache::MARVIN_LABEL_CACHE), id);
+        let label = match label {
+            Some(label) => label,
+            None => {
+                let mut result: String = "".to_string();
+                sleep(Duration::from_secs(1)).await;
+                match marvin_client.get_labels().await {
+                    Ok(labels) => {
+                        for l in labels {
+                            if *id == l.id {
+                                result = l.title.to_string();
+                            }
+                            cache::cache_put(
+                                Arc::clone(&*cache::MARVIN_LABEL_CACHE),
+                                l.id,
+                                l.title,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        println!("Error collecting labels: {}", err);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+                result
+            }
+        };
+        if label.is_empty() {
+            continue;
+        }
+        let tag = cache::cache_get(Arc::clone(&*cache::TOGGL_TAG_CACHE), &label);
+        let tag = match tag {
+            Some(tag) => tag,
+            None => {
+                let mut result: i64 = -1;
+                sleep(Duration::from_secs(1)).await;
+                match toggl_client.list_tags(workspace_id).await {
+                    Ok(existing_tags) => {
+                        for t in existing_tags {
+                            if label == t.name {
+                                result = t.id;
+                            }
+                            cache::cache_put(Arc::clone(&*cache::TOGGL_TAG_CACHE), t.name, t.id);
+                        }
+                    }
+                    Err(err) => {
+                        println!("Error collecting tags: {}", err);
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    }
+                }
+
+                if result == -1 && create_if_missing {
+                    let tag_request = CreateTagRequest { name: label.clone() };
+                    match toggl_client.create_tag(workspace_id, &tag_request).await {
+                        Ok(tag) => {
+                            result = tag.id;
+                            cache::cache_put(Arc::clone(&*cache::TOGGL_TAG_CACHE), tag.name, tag.id);
+                        }
+                        Err(err) => {
+                            println!("Error adding tag: {}", err);
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                    }
+                }
+                result
+            }
+        };
+        if tag != -1 {
+            tags.push(tag);
+        }
+    }
+
+    // No parents - just description, no project
+    if parents.is_empty() {
+        return Ok(ResolvedTogglIds {
+            client_id: None,
+            project_id: None,
+            task_id: None,
+            description: remove_timestamp_prefix(payload.title.trim()),
+            tags,
+        });
+    }
+
+    // Determine client/project/task names based on hierarchy depth
+    let (client_name, project_name, task_name): (&str, &str, Option<&str>) = match parents.len() {
+        1 => (&parents[0], &parents[0], None),
+        2 => (&parents[1], &parents[0], None),
+        3 => (&parents[2], &parents[1], Some(&parents[0])),
+        _ => (
+            &parents[parents.len() - 1],
+            &parents[parents.len() - 2],
+            Some(&parents[0]),
+        ),
+    };
+
+    let client_name = remove_timestamp_prefix(client_name.trim());
+    let project_name = remove_timestamp_prefix(project_name.trim());
+    let task_name = task_name.map(|t| remove_timestamp_prefix(t.trim()));
+    let description = remove_timestamp_prefix(payload.title.trim());
+
+    // Resolve client ID
+    let client_id = match cache_get(Arc::clone(&*TOGGL_CLIENT_CACHE), &client_name) {
+        Some(id) => Some(id),
+        None => {
+            let clients = match toggl_client.list_clients(workspace_id, None, None).await {
+                Ok(clients) => clients,
+                Err(error) => {
+                    println!("Error fetching clients {}", error);
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            };
+            let mut found_id: Option<i64> = None;
+            for c in clients {
+                if client_name == c.name {
+                    found_id = Some(c.id);
+                }
+                cache_put(Arc::clone(&*TOGGL_CLIENT_CACHE), c.name, c.id);
+            }
+            match found_id {
+                Some(id) => Some(id),
+                None if create_if_missing => {
+                    let request = &CreateClientRequest {
+                        name: client_name.clone(),
+                        notes: None,
+                    };
+                    match toggl_client.create_client(workspace_id, request).await {
+                        Ok(c) => Some(c.id),
+                        Err(error) => {
+                            println!("Error creating client {}", error);
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                    }
+                }
+                None => None,
+            }
+        }
+    };
+
+    // Resolve project ID (requires client_id)
+    let project_id = match client_id {
+        Some(cid) => {
+            match cache_get(Arc::clone(&*TOGGL_PROJECT_CACHE), &(cid, project_name.clone())) {
+                Some(id) => Some(id),
+                None => {
+                    let projects = match toggl_client.list_projects(workspace_id).await {
+                        Ok(projects) => projects,
+                        Err(error) => {
+                            println!("Error fetching projects {}", error);
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                    };
+                    let mut found_id: Option<i64> = None;
+                    for p in projects {
+                        if project_name == p.name && p.client_id == Some(cid) {
+                            found_id = Some(p.id);
+                        }
+                        if let Some(pcid) = p.client_id {
+                            cache_put(Arc::clone(&*TOGGL_PROJECT_CACHE), (pcid, p.name), p.id);
+                        }
+                    }
+                    match found_id {
+                        Some(id) => Some(id),
+                        None if create_if_missing => {
+                            let mut request: crate::toggl_api::requests::CreateProjectRequest =
+                                Default::default();
+                            request.active = Some(true);
+                            request.auto_estimates = Some(false);
+                            request.billable = Some(false);
+                            request.color = Some("#ffffff".to_string());
+                            request.is_private = Some(true);
+                            request.name = project_name.clone();
+                            request.client_id = Some(cid);
+                            match toggl_client.create_project(workspace_id, &request).await {
+                                Ok(p) => Some(p.id),
+                                Err(error) => {
+                                    println!("Error creating project {}", error);
+                                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                                }
+                            }
+                        }
+                        None => None,
+                    }
+                }
+            }
+        }
+        None => None,
+    };
+
+    // Resolve task ID (requires project_id)
+    let task_id = match (project_id, &task_name) {
+        (Some(pid), Some(tname)) => {
+            match cache_get(Arc::clone(&*TOGGL_TASK_CACHE), &(pid, tname.clone())) {
+                Some(id) => Some(id),
+                None => {
+                    let tasks = match toggl_client.get_project_tasks(workspace_id, pid).await {
+                        Ok(tasks) => tasks,
+                        Err(error) => {
+                            println!("Error fetching tasks {}", error);
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                    };
+                    let mut found_id: Option<i64> = None;
+                    for t in tasks {
+                        if *tname == t.name {
+                            found_id = Some(t.id);
+                        }
+                        cache_put(Arc::clone(&*TOGGL_TASK_CACHE), (pid, t.name), t.id);
+                    }
+                    match found_id {
+                        Some(id) => Some(id),
+                        None if create_if_missing => {
+                            let request = &crate::toggl_api::requests::CreateTaskRequest {
+                                active: Some(true),
+                                estimated_seconds: Some(0),
+                                name: tname.clone(),
+                                user_id: None,
+                            };
+                            match toggl_client.create_task(workspace_id, pid, request).await {
+                                Ok(t) => Some(t.id),
+                                Err(error) => {
+                                    println!("Error creating task {}", error);
+                                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                                }
+                            }
+                        }
+                        None => None,
+                    }
+                }
+            }
+        }
+        _ => None,
+    };
+
+    Ok(ResolvedTogglIds {
+        client_id,
+        project_id,
+        task_id,
+        description,
+        tags,
+    })
+}
+
 /// Main router for Marvin webhooks.
 pub fn router() -> Router {
     Router::new()
@@ -80,14 +381,9 @@ async fn require_auth(req: Request<Body>, next: Next) -> Result<Response, Status
 /// Primary endpoint that routes based on `webhook_type`.
 async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> {
     println!("Webhook Called");
-    // TODO: remove prefix comment
-
-    let mut parent_id = payload.parent_id;
-    let mut parents: Vec<String> = vec![];
 
     let marvin_api_token = match env::var("MARVIN_API_TOKEN") {
         Ok(val) => val,
-
         Err(_) => {
             eprintln!("MARVIN_API_TOKEN is not set!");
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -110,363 +406,49 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
         }
     };
 
-    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
-
-    // TODO: remove localhost override
-    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token));
-
-    while parent_id != "root" && parent_id != "unassigned" {
-        // Get project from cache
-        let parent = cache::cache_get(Arc::clone(&*cache::MARVIN_PROJECT_CACHE), &parent_id);
-        let parent = match parent {
-            Some(parent) => parent,
-            None => match marvin_client.read_doc(&parent_id).await {
-                Ok(doc) => {
-                    let title = match doc.extra.get("title") {
-                        Some(Value::String(title)) => title.clone(),
-                        _ => return Err(StatusCode::SERVICE_UNAVAILABLE),
-                    };
-                    let parent = match doc.extra.get("parentId") {
-                        Some(Value::String(parent)) => parent.clone(),
-                        _ => return Err(StatusCode::SERVICE_UNAVAILABLE),
-                    };
-                    (title, parent)
-                }
-                Err(err) => {
-                    println!("{}", err);
-                    return Err(StatusCode::SERVICE_UNAVAILABLE);
-                }
-            },
-        };
-        cache::cache_put(
-            Arc::clone(&*cache::MARVIN_PROJECT_CACHE),
-            parent_id,
-            parent.clone(),
-        );
-        parents.push(remove_timestamp_prefix(&parent.0));
-        parent_id = parent.1;
-        // Make the marvin rate limiter happy by waiting 1 second
-        sleep(Duration::from_secs(1)).await;
-    }
-
     let workspace_id = match WORKSPACE_ID.get() {
-        Some(workspace_id) => workspace_id,
+        Some(workspace_id) => *workspace_id,
         None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
 
-    let mut labels: Vec<String> = vec![];
+    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
+    let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token));
 
-    // Collect all labels for passthrough
-    let mut tags: Vec<i64> = vec![];
-    for id in payload.label_ids {
-        let label = cache::cache_get(Arc::clone(&*cache::MARVIN_LABEL_CACHE), &id);
-        let label = match label {
-            Some(label) => label,
-            None => {
-                let mut result: String = "".to_string();
-                // Make the marvin rate limiter happy by waiting 1 second
-                sleep(Duration::from_secs(1)).await;
-                match marvin_client.get_labels().await {
-                    Ok(labels) => {
-                        for l in labels {
-                            if id == l.id {
-                                result = l.title.to_string();
-                            }
-                            cache::cache_put(
-                                Arc::clone(&*cache::MARVIN_LABEL_CACHE),
-                                l.id,
-                                l.title,
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        println!("Error collecting labels: {}", err);
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                    }
-                }
+    // Resolve task to Toggl IDs, creating missing entities
+    let resolved = resolve_marvin_task_to_toggl(
+        &payload,
+        &marvin_client,
+        &toggl_client,
+        workspace_id,
+        true, // create_if_missing
+    )
+    .await?;
 
-                result
-            }
-        };
-        if label == "" {
-            continue;
-        }
-        let tag = cache::cache_get(Arc::clone(&*cache::TOGGL_TAG_CACHE), &label);
-        let tag = match tag {
-            Some(tag) => tag,
-            None => {
-                let mut result: i64 = -1;
-                // Make the marvin rate limiter happy by waiting 1 second
-                sleep(Duration::from_secs(1)).await;
-                match toggl_client.list_tags(*workspace_id).await {
-                    Ok(tags) => {
-                        for l in tags {
-                            if label == l.name {
-                                result = l.id;
-                            }
-                            cache::cache_put(Arc::clone(&*cache::TOGGL_TAG_CACHE), l.name, l.id);
-                        }
-                    }
-                    Err(err) => {
-                        println!("Error collecting tags: {}", err);
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                    }
-                }
+    println!("Tags: {:#?}", resolved.tags);
 
-                if result == -1 {
-                    let tag_request = CreateTagRequest {
-                        name: label.clone(),
-                    };
-                    match toggl_client.create_tag(*workspace_id, &tag_request).await {
-                        Ok(tag) => {
-                            result = tag.id;
-                            cache::cache_put(
-                                Arc::clone(&*cache::TOGGL_TAG_CACHE),
-                                tag.name,
-                                tag.id,
-                            );
-                        }
-                        Err(err) => {
-                            println!("Error adding tag: {}", err);
-                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                        }
-                    }
-                }
-
-                result
-            }
-        };
-        if tag != -1 {
-            tags.push(tag);
-        }
+    // Stop any currently running entry
+    let result = toggl_client.stop_current_time_entry(None).await;
+    match result {
+        Err(error) => println!("Stop current time entry error: {}", error),
+        Ok(_) => (),
     }
 
-    println!("Tags: {:#?}", tags);
-
-    // Length 0: description is what is being done
-    // Length 1: client [0], project [0], task is what is being done
-    // Length 2: client [1], project [1], task is what is being done
-    // Length 3: client [1], project [2], task is what is being done
-    // Length 4: client [1], project [2], task [3], description is what is being done
-
-    if parents.len() > 0 {
-        let mut client = &parents[0];
-        let mut project = &parents[0];
-
-        let mut task = None;
-        let description = &payload.title;
-        if parents.len() == 1 {
-            client = &parents[0];
-            project = &parents[0];
+    // Start new time entry
+    match toggl_client
+        .start_time_entry(
+            workspace_id,
+            resolved.project_id,
+            resolved.task_id,
+            &resolved.description,
+            resolved.tags,
+        )
+        .await
+    {
+        Err(error) => {
+            println!("Start time entry error: {}", error);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
-        if parents.len() == 2 {
-            client = &parents[1];
-            project = &parents[0];
-        }
-        if parents.len() == 3 {
-            task = Some(&parents[0]);
-            project = &parents[1];
-            client = &parents[2];
-        }
-        if parents.len() > 3 {
-            task = Some(&parents[0]);
-            project = &parents[parents.len() - 2];
-            client = &parents[parents.len() - 1];
-        }
-
-        let client = &remove_timestamp_prefix(str::trim(client));
-        let project = &remove_timestamp_prefix(str::trim(project));
-        let task = task.map(|x| remove_timestamp_prefix(str::trim(x)));
-        let description = &remove_timestamp_prefix(str::trim(description));
-
-        let client = match cache_get(Arc::clone(&*TOGGL_CLIENT_CACHE), &client) {
-            Some(client) => client,
-            None => {
-                // List of clients and use that; if not, create our own
-                let clients = match toggl_client.list_clients(*workspace_id, None, None).await {
-                    Ok(clients) => clients,
-                    Err(error) => {
-                        println!("Error fetching clients {}", error);
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                    }
-                };
-                let mut our_client: Option<i64> = None;
-                for returned_client in clients {
-                    if *client == returned_client.name {
-                        our_client = Some(returned_client.id);
-                    }
-                    cache_put(
-                        Arc::clone(&*TOGGL_CLIENT_CACHE),
-                        returned_client.name,
-                        returned_client.id,
-                    );
-                }
-                match our_client {
-                    Some(client) => client,
-                    None => {
-                        // Create our own
-                        let request = &CreateClientRequest {
-                            name: client.to_string(),
-                            notes: None,
-                        };
-                        let result = toggl_client.create_client(*workspace_id, request).await;
-                        match result {
-                            Ok(client) => client.id,
-                            Err(error) => {
-                                println!("Error creating client {}", error);
-                                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
-        let project = match cache_get(
-            Arc::clone(&*TOGGL_PROJECT_CACHE),
-            &(client, (*project).clone()),
-        ) {
-            Some(project) => project,
-            None => {
-                // List of clients and use that; if not, create our own
-                let projects = match toggl_client.list_projects(*workspace_id).await {
-                    Ok(clients) => clients,
-                    Err(error) => {
-                        println!("Error fetching projects {}", error);
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                    }
-                };
-                let mut our_project: Option<i64> = None;
-                for returned_project in projects {
-                    if *project == returned_project.name
-                        && returned_project.client_id == Some(client)
-                    {
-                        our_project = Some(returned_project.id);
-                    }
-                    match returned_project.client_id {
-                        Some(client) => cache_put(
-                            Arc::clone(&*TOGGL_PROJECT_CACHE),
-                            (client, returned_project.name),
-                            returned_project.id,
-                        ),
-                        None => (),
-                    };
-                }
-                match our_project {
-                    Some(project) => project,
-                    None => {
-                        // Create our own
-                        let mut request: crate::toggl_api::requests::CreateProjectRequest =
-                            Default::default();
-                        request.active = Some(true);
-                        request.auto_estimates = Some(false);
-                        request.billable = Some(false);
-                        request.color = Some("#ffffff".to_string());
-                        request.is_private = Some(true);
-                        request.name = (*project).clone();
-                        request.client_id = Some(client);
-                        let result = toggl_client.create_project(*workspace_id, &request).await;
-                        match result {
-                            Ok(client) => client.id,
-                            Err(error) => {
-                                println!("Error creating project {}", error);
-                                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
-        let task = match task {
-            Some(task) => {
-                match cache_get(Arc::clone(&*TOGGL_TASK_CACHE), &(project, (task).clone())) {
-                    Some(task) => Some(task),
-                    None => {
-                        // List of clients and use that; if not, create our own
-                        let tasks =
-                            match toggl_client.get_project_tasks(*workspace_id, project).await {
-                                Ok(clients) => clients,
-                                Err(error) => {
-                                    println!("Error fetching tasks {}", error);
-                                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                                }
-                            };
-                        let mut our_task: Option<i64> = None;
-                        for returned_task in tasks {
-                            if task == returned_task.name {
-                                our_task = Some(returned_task.id);
-                            }
-                            cache_put(
-                                Arc::clone(&*TOGGL_TASK_CACHE),
-                                (project, returned_task.name),
-                                returned_task.id,
-                            );
-                        }
-                        match our_task {
-                            Some(task) => Some(task),
-                            None => {
-                                // Create our own
-                                let request = &crate::toggl_api::requests::CreateTaskRequest {
-                                    active: Some(true),
-                                    estimated_seconds: Some(0),
-                                    name: (task).clone(),
-                                    user_id: None,
-                                };
-                                let result = toggl_client
-                                    .create_task(*workspace_id, project, request)
-                                    .await;
-                                match result {
-                                    Ok(task) => Some(task.id),
-                                    Err(error) => {
-                                        println!("Error creating tasks {}", error);
-                                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            None => None,
-        };
-
-        let result = toggl_client.stop_current_time_entry(None).await;
-
-        match result {
-            Err(error) => println!("Stop current time entry error: {}", error),
-            Ok(_) => (),
-        }
-
-        match toggl_client
-            .start_time_entry(*workspace_id, Some(project), task, description, tags)
-            .await
-        {
-            Err(error) => {
-                println!("Start time entry error: {}", error);
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-            Ok(_) => (),
-        }
-    } else {
-        let result = toggl_client.stop_current_time_entry(None).await;
-
-        match result {
-            Err(error) => println!("Stop current time entry error: {}", error),
-            Ok(_) => (),
-        }
-
-        let cleaned_title = remove_timestamp_prefix(payload.title.trim());
-        match toggl_client
-            .start_time_entry(*workspace_id, None, None, &cleaned_title, tags)
-            .await
-        {
-            Err(error) => {
-                println!("start time entry error: {}", error);
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-            Ok(_) => (),
-        }
+        Ok(_) => (),
     }
 
     Ok("Webhook processed successfully".to_string())
@@ -500,24 +482,65 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
         }
     };
 
-    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
+    let workspace_id = match WORKSPACE_ID.get() {
+        Some(workspace_id) => *workspace_id,
+        None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
 
+    let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
     let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token));
 
-    // Collect all labels for passthrough
+    // Check if there's a current time entry
+    let current_entry = match toggl_client.get_current_time_entry().await {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            println!("No current time entry running, nothing to stop");
+            return Ok("No current time entry".to_string());
+        }
+        Err(error) => {
+            println!("Error fetching current time entry: {}", error);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // Resolve task to Toggl IDs (without creating missing entities)
+    let resolved = resolve_marvin_task_to_toggl(
+        &payload,
+        &marvin_client,
+        &toggl_client,
+        workspace_id,
+        false, // don't create_if_missing
+    )
+    .await?;
+
+    // Compare project_id and description
+    let current_description = current_entry.description.as_deref().unwrap_or("");
+    let project_matches = current_entry.project_id == resolved.project_id;
+    let description_matches = current_description == resolved.description;
+
+    if !project_matches || !description_matches {
+        println!(
+            "Current time entry does not match task. Project match: {}, Description match: {} (current: '{}', expected: '{}')",
+            project_matches, description_matches, current_description, resolved.description
+        );
+        return Ok("Current time entry does not match task".to_string());
+    }
+
+    println!("Time entry matches task, proceeding with stop");
+
+    // Collect labels for productivity override
     let mut labels: Vec<String> = vec![];
-    for id in payload.label_ids {
-        let label = cache::cache_get(Arc::clone(&*cache::MARVIN_LABEL_CACHE), &id);
+    for id in &payload.label_ids {
+        let label = cache::cache_get(Arc::clone(&*cache::MARVIN_LABEL_CACHE), id);
         let label = match label {
             Some(label) => label,
             None => {
                 let mut result: String = "".to_string();
-                // Make the marvin rate limiter happy by waiting 1 second
                 sleep(Duration::from_secs(1)).await;
                 match marvin_client.get_labels().await {
-                    Ok(labels) => {
-                        for l in labels {
-                            if id == l.id {
+                    Ok(fetched_labels) => {
+                        for l in fetched_labels {
+                            if *id == l.id {
                                 result = l.title.to_string();
                             }
                             cache::cache_put(
@@ -532,11 +555,10 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
                         return Err(StatusCode::INTERNAL_SERVER_ERROR);
                     }
                 }
-
                 result
             }
         };
-        if label != "" {
+        if !label.is_empty() {
             labels.push(label);
         }
     }
