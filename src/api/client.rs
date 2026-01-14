@@ -1,5 +1,7 @@
 use reqwest::{Client as HttpClient, StatusCode};
 use serde_json::json;
+use std::time::Duration;
+use tokio::time::sleep;
 use crate::api::error::ApiError;
 use crate::api::requests::*;
 use crate::api::responses::*;
@@ -9,6 +11,11 @@ use crate::models::{
     habits::Habit,
     reminders::Reminder,
 };
+
+/// Maximum number of retries for rate-limited requests
+const MAX_RETRIES: u32 = 5;
+/// Initial backoff delay in seconds
+const INITIAL_BACKOFF_SECS: u64 = 2;
 
 /// The default base URL for Marvin's API.
 pub const MARVIN_BASE_URL: &str = "https://serv.amazingmarvin.com/api";
@@ -54,29 +61,50 @@ impl MarvinClient {
         T: serde::de::DeserializeOwned,
     {
         let url = format!("{}/{}", self.base_url, endpoint);
-        let mut req = self.http.get(&url);
+        let mut retries = 0;
+        let mut backoff_secs = INITIAL_BACKOFF_SECS;
 
-        if let Some(q) = query {
-            req = req.query(q);
+        loop {
+            let mut req = self.http.get(&url);
+
+            if let Some(q) = query {
+                req = req.query(q);
+            }
+
+            // Use whichever token is available, typically the API token
+            if let Some(ref token) = self.api_token {
+                req = req.header("X-API-Token", token);
+            }
+            if let Some(ref token) = self.full_access_token {
+                req = req.header("X-Full-Access-Token", token);
+            }
+
+            let resp = req.send().await?;
+            println!("{:#?}", resp);
+
+            if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+                if retries >= MAX_RETRIES {
+                    println!("[MARVIN] Rate limited, max retries ({}) exceeded", MAX_RETRIES);
+                    return Err(ApiError::StatusCodeError(resp.status()));
+                }
+                println!(
+                    "[MARVIN] Rate limited (429), retry {}/{} after {}s backoff",
+                    retries + 1,
+                    MAX_RETRIES,
+                    backoff_secs
+                );
+                sleep(Duration::from_secs(backoff_secs)).await;
+                retries += 1;
+                backoff_secs *= 2; // Exponential backoff
+                continue;
+            }
+
+            if !resp.status().is_success() {
+                return Err(ApiError::StatusCodeError(resp.status()));
+            }
+            let data = resp.json::<T>().await?;
+            return Ok(data);
         }
-
-        // Use whichever token is available, typically the API token
-        if let Some(ref token) = self.api_token {
-            req = req.header("X-API-Token", token);
-        }
-        if let Some(ref token) = self.full_access_token {
-            req = req.header("X-Full-Access-Token", token);
-        }
-
-
-        let resp = req.send().await?;
-        println!("{:#?}", resp);
-        if !resp.status().is_success() {
-            return Err(ApiError::StatusCodeError(resp.status()));
-        }
-        let data = resp.json::<T>().await?;
-
-        Ok(data)
     }
 
     async fn post_json<Req, Res>(&self, endpoint: &str, body: &Req) -> Result<Res, ApiError>
@@ -85,31 +113,45 @@ impl MarvinClient {
         Res: serde::de::DeserializeOwned,
     {
         let url = format!("{}/{}", self.base_url, endpoint);
-        let mut req = self.http.post(&url).json(body);
+        let mut retries = 0;
+        let mut backoff_secs = INITIAL_BACKOFF_SECS;
 
-        // Use whichever token is required. The official docs specify:
-        //   X-API-Token for limited endpoints
-        //   X-Full-Access-Token for full access endpoints
-        // We'll try a best-effort approach: if a full access token is available
-        // and the endpoint is known to require it, we use it. Otherwise, 
-        // we default to the api token. You might make a more explicit approach.
-        //
-        // For demonstration, we do: if we have an api_token, use that first,
-        // else if we have a full_access_token, use that. 
-        if let Some(ref token) = self.api_token {
-            req = req.header("X-API-Token", token);
-        }
-        if let Some(ref token) = self.full_access_token {
-            req = req.header("X-Full-Access-Token", token);
-        }
+        loop {
+            let mut req = self.http.post(&url).json(body);
 
-        let resp = req.send().await?;
-        println!("{:#?}", resp);
-        if !resp.status().is_success() {
-            return Err(ApiError::StatusCodeError(resp.status()));
+            if let Some(ref token) = self.api_token {
+                req = req.header("X-API-Token", token);
+            }
+            if let Some(ref token) = self.full_access_token {
+                req = req.header("X-Full-Access-Token", token);
+            }
+
+            let resp = req.send().await?;
+            println!("{:#?}", resp);
+
+            if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+                if retries >= MAX_RETRIES {
+                    println!("[MARVIN] Rate limited, max retries ({}) exceeded", MAX_RETRIES);
+                    return Err(ApiError::StatusCodeError(resp.status()));
+                }
+                println!(
+                    "[MARVIN] Rate limited (429), retry {}/{} after {}s backoff",
+                    retries + 1,
+                    MAX_RETRIES,
+                    backoff_secs
+                );
+                sleep(Duration::from_secs(backoff_secs)).await;
+                retries += 1;
+                backoff_secs *= 2;
+                continue;
+            }
+
+            if !resp.status().is_success() {
+                return Err(ApiError::StatusCodeError(resp.status()));
+            }
+            let data = resp.json::<Res>().await?;
+            return Ok(data);
         }
-        let data = resp.json::<Res>().await?;
-        Ok(data)
     }
 
     // Sometimes responses are just "OK" or a raw string. We'll have a variant:
@@ -118,22 +160,45 @@ impl MarvinClient {
         Req: serde::Serialize,
     {
         let url = format!("{}/{}", self.base_url, endpoint);
-        let mut req = self.http.post(&url).json(body);
+        let mut retries = 0;
+        let mut backoff_secs = INITIAL_BACKOFF_SECS;
 
-        if let Some(ref token) = self.api_token {
-            req = req.header("X-API-Token", token);
-        }
-        if let Some(ref token) = self.full_access_token {
-            req = req.header("X-Full-Access-Token", token);
-        }
+        loop {
+            let mut req = self.http.post(&url).json(body);
 
-        let resp = req.send().await?;
-        println!("{:#?}", resp);
-        if !resp.status().is_success() {
-            return Err(ApiError::StatusCodeError(resp.status()));
+            if let Some(ref token) = self.api_token {
+                req = req.header("X-API-Token", token);
+            }
+            if let Some(ref token) = self.full_access_token {
+                req = req.header("X-Full-Access-Token", token);
+            }
+
+            let resp = req.send().await?;
+            println!("{:#?}", resp);
+
+            if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+                if retries >= MAX_RETRIES {
+                    println!("[MARVIN] Rate limited, max retries ({}) exceeded", MAX_RETRIES);
+                    return Err(ApiError::StatusCodeError(resp.status()));
+                }
+                println!(
+                    "[MARVIN] Rate limited (429), retry {}/{} after {}s backoff",
+                    retries + 1,
+                    MAX_RETRIES,
+                    backoff_secs
+                );
+                sleep(Duration::from_secs(backoff_secs)).await;
+                retries += 1;
+                backoff_secs *= 2;
+                continue;
+            }
+
+            if !resp.status().is_success() {
+                return Err(ApiError::StatusCodeError(resp.status()));
+            }
+            let text = resp.text().await?;
+            return Ok(text);
         }
-        let text = resp.text().await?;
-        Ok(text)
     }
 
     //--------------------------------------------------------------------------

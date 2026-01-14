@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio::time::{sleep, Sleep};
 use std::{env, sync::{atomic::Ordering, Arc}, time::Duration};
 
-use crate::{api::{client::MarvinClient, requests::{CreateProjectRequest, CreateTaskRequest}}, cache::cache::{self, cache_get, cache_put, TOGGL_CLIENT_CACHE, TOGGL_PROJECT_CACHE, TOGGL_TASK_CACHE}, models::tasks::{ProjectOrCategory, Task}, toggl_api::{client::TogglClient, requests::CreateClientRequest}, LEISURE_BALANCE, LEISURE_RATE, WORKSPACE_ID};
+use crate::{api::{client::MarvinClient, requests::{CreateProjectRequest, CreateTaskRequest}}, cache::cache::{self, cache_get, cache_put, TOGGL_CLIENT_CACHE, TOGGL_PROJECT_CACHE, TOGGL_TASK_CACHE}, models::tasks::{ProjectOrCategory, Task}, toggl_api::{client::{TogglClient, StopCondition}, requests::CreateClientRequest}, LEISURE_BALANCE, LEISURE_RATE, WORKSPACE_ID};
 
 /// Main router for webhooks
 pub fn router() -> Router {
@@ -118,7 +118,7 @@ async fn stop_current() -> Result<String, StatusCode> {
     let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
 
     let result = toggl_client
-        .stop_current_time_entry(None)
+        .stop_current_time_entry(None, StopCondition::Always)
         .await;
 
     match result {

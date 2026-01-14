@@ -24,7 +24,7 @@ use crate::{
     },
     models::tasks::{ProjectOrCategory, Task},
     toggl_api::{
-        client::TogglClient,
+        client::{TogglClient, StopCondition},
         requests::{CreateClientRequest, CreateTagRequest},
     },
 };
@@ -98,7 +98,7 @@ async fn resolve_marvin_task_to_toggl(
         );
         parents.push(remove_timestamp_prefix(&parent.0));
         parent_id = parent.1;
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(2)).await;
     }
 
     println!("Parent hierarchy (len={}): {:?}", parents.len(), parents);
@@ -111,7 +111,7 @@ async fn resolve_marvin_task_to_toggl(
             Some(label) => label,
             None => {
                 let mut result: String = "".to_string();
-                sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_secs(2)).await;
                 match marvin_client.get_labels().await {
                     Ok(labels) => {
                         for l in labels {
@@ -141,7 +141,7 @@ async fn resolve_marvin_task_to_toggl(
             Some(tag) => tag,
             None => {
                 let mut result: i64 = -1;
-                sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_secs(2)).await;
                 match toggl_client.list_tags(workspace_id).await {
                     Ok(existing_tags) => {
                         for t in existing_tags {
@@ -445,11 +445,23 @@ async fn start_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode>
 
     println!("Tags: {:#?}", resolved.tags);
 
-    // Stop any currently running entry
-    let result = toggl_client.stop_current_time_entry(None).await;
+    // Stop any currently running entry only if it's different from what we want to start
+    let stop_condition = StopCondition::IfDifferent {
+        project_id: resolved.project_id,
+        description: resolved.description.clone(),
+    };
+    let result = toggl_client.stop_current_time_entry(None, stop_condition).await;
     match result {
         Err(error) => println!("Stop current time entry error: {}", error),
-        Ok(_) => (),
+        Ok(None) => {
+            // Either no entry was running, or same task is already running
+            // Check if same task is running by seeing if there's a current entry
+            if let Ok(Some(_)) = toggl_client.get_current_time_entry().await {
+                println!("Same task already running, skipping start");
+                return Ok("Task already running".to_string());
+            }
+        }
+        Ok(Some(_)) => (),
     }
 
     // Start new time entry
@@ -509,19 +521,6 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
     let toggl_client = TogglClient::new(toggl_api_token, "api_token".to_string());
     let marvin_client = MarvinClient::new(Some(marvin_api_token), Some(marvin_full_access_token));
 
-    // Check if there's a current time entry
-    let current_entry = match toggl_client.get_current_time_entry().await {
-        Ok(Some(entry)) => entry,
-        Ok(None) => {
-            println!("No current time entry running, nothing to stop");
-            return Ok("No current time entry".to_string());
-        }
-        Err(error) => {
-            println!("Error fetching current time entry: {}", error);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
     // Resolve task to Toggl IDs (without creating missing entities)
     let resolved = resolve_marvin_task_to_toggl(
         &payload,
@@ -532,21 +531,6 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
     )
     .await?;
 
-    // Compare project_id and description
-    let current_description = current_entry.description.as_deref().unwrap_or("");
-    let project_matches = current_entry.project_id == resolved.project_id;
-    let description_matches = current_description == resolved.description;
-
-    if !project_matches || !description_matches {
-        println!(
-            "Current time entry does not match task. Project match: {}, Description match: {} (current: '{}', expected: '{}')",
-            project_matches, description_matches, current_description, resolved.description
-        );
-        return Ok("Current time entry does not match task".to_string());
-    }
-
-    println!("Time entry matches task, proceeding with stop");
-
     // Collect labels for productivity override
     let mut labels: Vec<String> = vec![];
     for id in &payload.label_ids {
@@ -555,7 +539,7 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
             Some(label) => label,
             None => {
                 let mut result: String = "".to_string();
-                sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_secs(2)).await;
                 match marvin_client.get_labels().await {
                     Ok(fetched_labels) => {
                         for l in fetched_labels {
@@ -594,13 +578,27 @@ async fn stop_tracking(Json(payload): Json<Task>) -> Result<String, StatusCode> 
         }
     }
 
+    // Stop only if current entry matches the task being stopped
+    let stop_condition = StopCondition::IfMatches {
+        project_id: resolved.project_id,
+        description: resolved.description.clone(),
+    };
     let result = toggl_client
-        .stop_current_time_entry(productivity_override)
+        .stop_current_time_entry(productivity_override, stop_condition)
         .await;
 
     match result {
-        Err(error) => println!("Stop current time entry error: {}", error),
-        Ok(_) => (),
+        Err(error) => {
+            println!("Stop current time entry error: {}", error);
+            return Ok("Error stopping time entry".to_string());
+        }
+        Ok(None) => {
+            println!("No matching time entry to stop");
+            return Ok("No matching time entry".to_string());
+        }
+        Ok(Some(_)) => {
+            println!("Time entry stopped successfully");
+        }
     }
 
     Ok("Webhook processed successfully".to_string())

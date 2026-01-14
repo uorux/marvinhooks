@@ -6,12 +6,24 @@ use crate::LEISURE_RATE;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use reqwest::{Client as HttpClient, Method, StatusCode};
 use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 
 /// The default base URL for Toggl Track API v9.
 pub const TOGGL_BASE_URL: &str = "https://api.track.toggl.com/api/v9";
+
+/// Condition for stopping a time entry
+#[derive(Debug, Clone)]
+pub enum StopCondition {
+    /// Always stop the current entry
+    Always,
+    /// Only stop if current entry matches (project_id, description)
+    IfMatches { project_id: Option<i64>, description: String },
+    /// Only stop if current entry differs from (project_id, description)
+    IfDifferent { project_id: Option<i64>, description: String },
+}
 
 #[derive(Debug, Clone)]
 pub struct TogglClient {
@@ -313,7 +325,41 @@ impl TogglClient {
             "workspaces/{}/time_entries/{}/stop",
             workspace_id, time_entry_id
         );
-        self.patch_json_no_body(&endpoint).await
+        let url = format!("{}/{}", self.base_url, endpoint);
+
+        let req = self
+            .http
+            .request(Method::PATCH, &url)
+            .basic_auth(&self.username, Some(&self.password));
+
+        let resp = req.send().await?;
+        println!("{:#?}", resp);
+
+        if !resp.status().is_success() {
+            return Err(TogglError::StatusCodeError(resp.status()));
+        }
+
+        // Get the response text first to handle empty/null responses
+        let text = resp.text().await?;
+        println!("[TOGGL] stop_time_entry response body: {}", text);
+
+        if text.is_empty() || text == "null" {
+            return Err(TogglError::DataError(
+                "Stop time entry returned empty or null response".to_string(),
+            ));
+        }
+
+        // Try to parse as TimeEntry
+        match serde_json::from_str::<TimeEntry>(&text) {
+            Ok(te) => Ok(te),
+            Err(e) => {
+                println!("[TOGGL] Failed to parse stop response: {}", e);
+                Err(TogglError::DataError(format!(
+                    "Failed to parse stop response: {}",
+                    e
+                )))
+            }
+        }
     }
 
     pub async fn get_current_time_entry(&self) -> Result<Option<TimeEntry>, TogglError> {
@@ -347,7 +393,11 @@ impl TogglClient {
         }
     }
 
-    pub async fn stop_current_time_entry(&self, productivity_override: Option<bool>) -> Result<Option<TimeEntry>, TogglError> {
+    pub async fn stop_current_time_entry(
+        &self,
+        productivity_override: Option<bool>,
+        condition: StopCondition,
+    ) -> Result<Option<TimeEntry>, TogglError> {
         // 1) Find current time entry
         let current_te_opt = self.get_current_time_entry().await?;
 
@@ -356,6 +406,37 @@ impl TogglClient {
             Some(te) => te,
             None => return Ok(None), // No current entry
         };
+
+        // 3) Check stop condition
+        let current_description = current_te.description.as_deref().unwrap_or("");
+        let should_stop = match &condition {
+            StopCondition::Always => true,
+            StopCondition::IfMatches { project_id, description } => {
+                let matches = current_te.project_id == *project_id && current_description == description;
+                println!(
+                    "[TOGGL] StopCondition::IfMatches - project: {:?}=={:?} ({}), desc: '{}'=='{}' ({}) -> {}",
+                    current_te.project_id, project_id, current_te.project_id == *project_id,
+                    current_description, description, current_description == description,
+                    matches
+                );
+                matches
+            }
+            StopCondition::IfDifferent { project_id, description } => {
+                let differs = current_te.project_id != *project_id || current_description != description;
+                println!(
+                    "[TOGGL] StopCondition::IfDifferent - project: {:?}!={:?} ({}), desc: '{}'!='{}' ({}) -> {}",
+                    current_te.project_id, project_id, current_te.project_id != *project_id,
+                    current_description, description, current_description != description,
+                    differs
+                );
+                differs
+            }
+        };
+
+        if !should_stop {
+            println!("[TOGGL] Stop condition not met, leaving current entry running");
+            return Ok(None);
+        }
 
         let target: DateTime<Utc> = current_te.start
             .parse()
@@ -394,7 +475,7 @@ impl TogglClient {
         }
 
 
-        // 3) Extract workspace
+        // 4) Extract workspace
         let ws_id = match current_te.workspace_id {
             Some(id) => id,
             None => {
@@ -407,7 +488,7 @@ impl TogglClient {
             }
         };
 
-        // 4) Call stop_time_entry
+        // 5) Call stop_time_entry
         let stopped_te = self.stop_time_entry(ws_id, current_te.id).await?;
         Ok(Some(stopped_te))
     }
